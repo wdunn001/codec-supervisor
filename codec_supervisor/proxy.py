@@ -61,6 +61,10 @@ async def proxy_request(request: Request, backend_url: str) -> StreamingResponse
     response_headers = {
         k: v for k, v in upstream.headers.items() if k.lower() not in HOP_BY_HOP
     }
+    # Expose response timing to cross-origin pages (e.g. the demo-web bench
+    # at localhost:5173) — required for `PerformanceResourceTiming.encodedBodySize`
+    # to report real wire bytes instead of 0. Harmless when same-origin.
+    response_headers.setdefault("timing-allow-origin", "*")
 
     async def gen():
         try:
