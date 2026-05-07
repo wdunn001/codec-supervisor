@@ -42,6 +42,20 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
  && pip install msgpack brotli zstandard \
  && pip install --upgrade "sglang-kernel>=0.4.2.post1"
 
+# ---------- 1b. fetch reference Codec zstd dicts so dict-zstd works out of the box ----------
+# Per spec/PROTOCOL.md "Pre-trained ZSTD dictionaries", a server MUST load
+# a dict before the negotiator can pick zstd. Baking the canonical dicts
+# from Codec/dictionaries/ into the image means a fresh `docker run` of
+# wdunn001/codec-sglang:latest unlocks the zstd column of the bench
+# matrix without operator action. Operators who want their own dicts
+# can mount over /opt/codec/dicts at runtime or override the env vars
+# below to point at a different path.
+RUN mkdir -p /opt/codec/dicts \
+ && curl -fsSL -o /opt/codec/dicts/qwen2.5-synth-msgpack-v1.dict \
+      https://raw.githubusercontent.com/wdunn001/Codec/main/dictionaries/qwen2.5-synth-msgpack-v1.dict \
+ && curl -fsSL -o /opt/codec/dicts/qwen2.5-synth-protobuf-v1.dict \
+      https://raw.githubusercontent.com/wdunn001/Codec/main/dictionaries/qwen2.5-synth-protobuf-v1.dict
+
 # ---------- 2. install codec-supervisor ----------
 COPY pyproject.toml /opt/codec/supervisor/pyproject.toml
 COPY codec_supervisor /opt/codec/supervisor/codec_supervisor
@@ -58,7 +72,9 @@ ENV CODEC_HOST=0.0.0.0 \
     CODEC_MODELS_DIR=/models \
     CODEC_INITIAL_MODEL=Qwen/Qwen2.5-0.5B-Instruct \
     CODEC_BACKEND_ARGS="--mem-fraction-static 0.85 --attention-backend triton" \
-    CODEC_LOG_LEVEL=INFO
+    CODEC_LOG_LEVEL=INFO \
+    CODEC_ZSTD_DICT_MSGPACK_PATH=/opt/codec/dicts/qwen2.5-synth-msgpack-v1.dict \
+    CODEC_ZSTD_DICT_PROTOBUF_PATH=/opt/codec/dicts/qwen2.5-synth-protobuf-v1.dict
 
 VOLUME ["/models"]
 EXPOSE 8080
