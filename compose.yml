@@ -1,0 +1,41 @@
+# Local single-GPU run. Models persist in the `models` volume across restarts.
+#
+#   docker compose up -d
+#   docker compose logs -f
+#
+# Override anything via .env (see .env.example) or inline:
+#   CODEC_INITIAL_MODEL=Qwen/Qwen2.5-7B-Instruct docker compose up -d
+
+services:
+  codec:
+    image: codec/sglang:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CODEC_SGLANG_REF: ${CODEC_SGLANG_REF:-feat/codec-server-side-agent}
+        CODEC_SGLANG_COMMIT: ${CODEC_SGLANG_COMMIT:-}
+    container_name: codec
+    restart: unless-stopped
+    shm_size: "8gb"
+    ports:
+      - "${CODEC_PORT:-8080}:8080"
+    environment:
+      CODEC_INITIAL_MODEL: ${CODEC_INITIAL_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}
+      CODEC_BACKEND_ARGS: ${CODEC_BACKEND_ARGS:---mem-fraction-static 0.85 --attention-backend triton}
+      CODEC_LOG_LEVEL: ${CODEC_LOG_LEVEL:-INFO}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - models:/models
+      - hf-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${CODEC_GPUS:-1}
+              capabilities: [gpu]
+
+volumes:
+  models:
+  hf-cache:

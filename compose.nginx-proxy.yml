@@ -1,0 +1,27 @@
+# Overlay for jwilder/nginx-proxy + ACME companion deployments.
+# Use together with compose.yml:
+#   docker compose -f compose.yml -f compose.nginx-proxy.yml up -d
+#
+# Required env in .env:
+#   VIRTUAL_HOST=codec.example.com
+#   LETSENCRYPT_HOST=codec.example.com
+#   LETSENCRYPT_EMAIL=ops@example.com
+
+services:
+  codec:
+    expose:
+      - "8080"
+    ports: !reset []
+    environment:
+      VIRTUAL_HOST: ${VIRTUAL_HOST:?set VIRTUAL_HOST in .env}
+      VIRTUAL_PORT: "8080"
+      LETSENCRYPT_HOST: ${LETSENCRYPT_HOST:?set LETSENCRYPT_HOST in .env}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:?set LETSENCRYPT_EMAIL in .env}
+    networks:
+      - default
+      - nginx-proxy
+
+networks:
+  nginx-proxy:
+    external: true
+    name: nginx-proxy

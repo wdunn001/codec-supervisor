@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codec-supervisor"
+version = "0.1.0"
+description = "Backend-agnostic supervisor / control plane for inference servers — model upload, hot-swap, admin API, OpenAI-compatible proxy."
+authors = [{name = "Quasarke LLC", email = "ops@quasarke.com"}]
+license = {text = "BUSL-1.1"}
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["llm", "inference", "supervisor", "control-plane", "codec", "sglang", "tgi", "vllm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+    "huggingface_hub>=0.20",
+    "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+codec-supervisor = "codec_supervisor.cli:main"
+
+[project.urls]
+Homepage = "https://codecai.net"
+Source = "https://github.com/wdunn001/codec-supervisor"
+
+[tool.setuptools.packages.find]
+include = ["codec_supervisor*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
