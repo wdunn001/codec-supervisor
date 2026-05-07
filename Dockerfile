@@ -39,7 +39,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
  && git log -1 --pretty='%h %s' > /opt/codec/CODEC_SGLANG_HEAD \
  && cd python \
  && pip install --no-deps -e . \
- && pip install msgpack \
+ && pip install msgpack brotli zstandard \
  && pip install --upgrade "sglang-kernel>=0.4.2.post1"
 
 # ---------- 2. install codec-supervisor ----------
