@@ -48,6 +48,67 @@ pip install -e .
 codec-supervisor --backend sglang --models-dir ./models --initial-model Qwen/Qwen2.5-0.5B-Instruct
 ```
 
+## Running your own models
+
+Three ways, progressively more "self-serve":
+
+### 1. Override `CODEC_INITIAL_MODEL` at `docker run` time
+
+Any HF repo id (or local path inside the container) — supervisor downloads + boots on first start, caches in the volume.
+
+```bash
+docker run --gpus all -p 8080:8080 \
+  -e CODEC_INITIAL_MODEL=meta-llama/Llama-3.1-8B-Instruct \
+  -e HF_TOKEN=hf_xxxxx \
+  -v hf-cache:/root/.cache/huggingface \
+  wdunn001/codec-sglang:latest
+```
+
+`HF_TOKEN` is only needed for gated models.
+
+### 2. Mount a local model directory
+
+For checkpoints / fine-tunes you don't want to upload to HF — just bind-mount and point `CODEC_INITIAL_MODEL` at it:
+
+```bash
+docker run --gpus all -p 8080:8080 \
+  -e CODEC_INITIAL_MODEL=/models/my-finetune \
+  -v /path/to/my-finetune:/models/my-finetune:ro \
+  wdunn001/codec-sglang:latest
+```
+
+The directory is read-only inside the container — no risk of the supervisor mutating your weights.
+
+### 3. Hot-swap via the admin API after boot
+
+This is what the supervisor adds on top of stock sglang. The container stays up, the model swaps:
+
+```bash
+# Pull a model into the registry while the container is running
+curl -X POST http://localhost:8080/admin/models/pull \
+  -H "Content-Type: application/json" \
+  -d '{"repo_id": "Qwen/Qwen2.5-7B-Instruct"}'
+
+# Or upload a tarball of a local fine-tune
+tar -cf my-finetune.tar -C ./checkpoints/my-finetune .
+curl -X POST "http://localhost:8080/admin/models/upload?name=my-finetune" \
+  -F "file=@my-finetune.tar"
+
+# Hot-swap to it (kills running sglang, boots a new one with the new model)
+curl -X POST http://localhost:8080/admin/load \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-finetune"}'
+
+# Or pass an HF id directly without staging it first
+curl -X POST http://localhost:8080/admin/load \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Qwen/Qwen2.5-7B-Instruct", "allow_remote": true}'
+```
+
+Pass `CODEC_BACKEND_ARGS` to tune sglang per-model (`--tp 2 --quantization fp8 --mem-fraction-static 0.9`, etc.). For per-load tuning, include `extra_args` in the `/admin/load` body — overrides the supervisor's default for that one model.
+
+> **Hot-swap caveat**: there's a few-second gap during the swap (terminate child → fork new → poll `/health`). For zero-downtime multi-model serving, run multiple containers behind a router. The supervisor is single-model-per-container by design.
+
 ## Admin API
 
 | Method | Path | Body | Notes |
