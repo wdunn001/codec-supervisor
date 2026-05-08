@@ -77,9 +77,14 @@ LABEL org.opencontainers.image.title="codec-metamcp" \
       org.opencontainers.image.licenses="Apache-2.0 AND BUSL-1.1"
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates curl postgresql-client \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g pnpm@${PNPM_VERSION}
+# postgresql-client provides `pg_isready` — upstream's
+# docker-entrypoint.sh calls it in a wait-for-postgres loop before
+# running drizzle migrations and spawning backend+frontend. Without
+# it the entrypoint spins forever logging 'pg_isready: not found'.
 
 # Match the upstream image's user/group so volume mounts ported from
 # upstream metamcp stay compatible.
