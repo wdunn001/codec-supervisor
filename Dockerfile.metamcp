@@ -105,9 +105,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/package.json ./
 COPY --from=builder --chown=nextjs:nodejs /app/pnpm-workspace.yaml ./
 
 # Production install + drizzle-kit for runtime migrations (matches
-# upstream's runtime stage).
+# upstream's runtime stage). Note: `pnpm add` in pnpm 10 doesn't
+# accept --no-frozen-lockfile (that flag is install-only); a fresh
+# `pnpm add` is fine without it.
 RUN pnpm install --prod --no-frozen-lockfile \
- && cd apps/backend && pnpm add drizzle-kit@0.31.1 --no-frozen-lockfile
+ && cd apps/backend && pnpm add drizzle-kit@0.31.1
 
 # Bring the entrypoint script across, chmod it, drop privileges.
 COPY --from=builder --chown=nextjs:nodejs /app/docker-entrypoint.sh ./
