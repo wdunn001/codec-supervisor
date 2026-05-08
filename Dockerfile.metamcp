@@ -16,8 +16,13 @@
 # override with `--entrypoint sh` for debugging — same way the
 # upstream image works.
 
-ARG NODE_VERSION=20
+ARG NODE_VERSION=22
 ARG PNPM_VERSION=10.12.0
+# Node 22 carries V8 12.4+ which supports the (?i:...) regex group
+# syntax used by @codecai/web@0.3.0's BPETokenizer. Node 20 throws
+# SyntaxError: Invalid regular expression at construction time, so
+# any Codec request that touches the tokenizer (response-side text
+# tokenization, args detokenize-then-encode roundtrips) fails out.
 
 ARG CODEC_METAMCP_REPO=https://github.com/wdunn001/metamcp.git
 ARG CODEC_METAMCP_REF=feat/codec-binary-transport
