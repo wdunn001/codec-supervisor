@@ -16,13 +16,18 @@
 # override with `--entrypoint sh` for debugging — same way the
 # upstream image works.
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 ARG PNPM_VERSION=10.12.0
-# Node 22 carries V8 12.4+ which supports the (?i:...) regex group
-# syntax used by @codecai/web@0.3.0's BPETokenizer. Node 20 throws
-# SyntaxError: Invalid regular expression at construction time, so
-# any Codec request that touches the tokenizer (response-side text
-# tokenization, args detokenize-then-encode roundtrips) fails out.
+# Node 24 carries V8 13.x which supports `(?i:...)` inline-flag
+# regex groups under either `'u'` or `'v'` flag. Earlier checks
+# claimed Node 22 was sufficient (V8 12.4) but the runtime image
+# actually shipped V8 12.4.254, which predates the inline-group
+# feature — it landed in V8 12.5. The qwen2 map's
+# pre_tokenizer_pattern uses `(?i:'s|'t|...)` for its contraction
+# handler, and that throws SyntaxError under V8 12.4 with any flag.
+# Bumping to 24 is the simplest fix; an alternative is a compiled
+# pre_tokenizer_program on the map side, but adding that to every
+# common map is a codec-maps follow-up.
 
 ARG CODEC_METAMCP_REPO=https://github.com/wdunn001/metamcp.git
 ARG CODEC_METAMCP_REF=feat/codec-binary-transport
