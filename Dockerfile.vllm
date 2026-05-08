@@ -71,6 +71,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
         vllm/entrypoints/openai/completion/api_router.py \
         vllm/entrypoints/openai/completion/protocol.py \
         vllm/entrypoints/openai/completion/serving.py \
+        vllm/entrypoints/openai/server_utils.py \
     ; do \
         src="/opt/codec/vllm-source/$f"; \
         dst="${VLLM_PATH}/${f#vllm/}"; \
