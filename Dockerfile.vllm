@@ -79,7 +79,21 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
         cp "$src" "$dst"; \
         echo "  ok $f"; \
     done \
- && pip install msgpack
+ && pip install msgpack brotli zstandard
+
+# ---------- 1b. fetch reference Codec zstd dicts so dict-zstd works once the wdunn001/vllm fork grows a startup hook ----------
+# Mirrors the sglang image (codec-supervisor Dockerfile). The dicts are
+# in place; engaging them at runtime needs an equivalent of sglang's
+# http_server.py lifespan hook (env-var path → set_zstd_dict) inside the
+# vLLM fork. Until that lands, the negotiator's dict-gate keeps zstd off
+# the candidate list and gzip handles the compressed cells.
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /opt/codec/dicts \
+ && curl -fsSL -o /opt/codec/dicts/qwen2.5-synth-msgpack-v1.dict \
+      https://raw.githubusercontent.com/wdunn001/Codec/main/dictionaries/qwen2.5-synth-msgpack-v1.dict \
+ && curl -fsSL -o /opt/codec/dicts/qwen2.5-synth-protobuf-v1.dict \
+      https://raw.githubusercontent.com/wdunn001/Codec/main/dictionaries/qwen2.5-synth-protobuf-v1.dict
 
 # ---------- 2. install codec-supervisor ----------
 COPY pyproject.toml /opt/codec/supervisor/pyproject.toml
@@ -97,7 +111,9 @@ ENV CODEC_HOST=0.0.0.0 \
     CODEC_MODELS_DIR=/models \
     CODEC_INITIAL_MODEL=Qwen/Qwen2.5-0.5B-Instruct \
     CODEC_BACKEND_ARGS="--gpu-memory-utilization 0.85 --max-model-len 2048 --dtype auto" \
-    CODEC_LOG_LEVEL=INFO
+    CODEC_LOG_LEVEL=INFO \
+    CODEC_ZSTD_DICT_MSGPACK_PATH=/opt/codec/dicts/qwen2.5-synth-msgpack-v1.dict \
+    CODEC_ZSTD_DICT_PROTOBUF_PATH=/opt/codec/dicts/qwen2.5-synth-protobuf-v1.dict
 
 VOLUME ["/models"]
 EXPOSE 8080
