@@ -1,0 +1,111 @@
+# syntax=docker/dockerfile:1.7
+#
+# codec/vllm — easily-deployable Codec inference instance on top of vLLM.
+#
+# Layers:
+#   1. vllm/vllm-openai:latest — base CUDA + vLLM + kernels
+#   2. wdunn001/vllm feat/codec-binary-transport — the open Codec PR
+#      (vllm-project/vllm#41765) overlaid via editable install
+#   3. codec-supervisor — admin/control-plane FastAPI on :8080
+#
+# Result: a single container with `docker run` semantics. Hit :8080 and you
+# get an OpenAI-compatible vLLM plus /admin endpoints to upload / pull /
+# swap models.
+
+# Note: we use the `nightly` tag (not `latest`) because the codec PR is
+# based on upstream's dev branch — post the route-refactor that splits
+# /v1/completions and /v1/chat/completions out of api_server.py into
+# per-endpoint modules. `:latest` (v0.10.x) still has the monolithic
+# api_server.py and the codec routes wouldn't fire there.
+ARG VLLM_BASE=vllm/vllm-openai:nightly
+FROM ${VLLM_BASE}
+
+ARG CODEC_VLLM_REPO=https://github.com/wdunn001/vllm.git
+ARG CODEC_VLLM_REF=feat/codec-binary-transport
+ARG CODEC_VLLM_COMMIT=
+
+LABEL org.opencontainers.image.title="codec-vllm" \
+      org.opencontainers.image.description="vLLM with Codec PR (#41765) + codec-supervisor control plane" \
+      org.opencontainers.image.source="https://github.com/wdunn001/codec-supervisor" \
+      org.opencontainers.image.url="https://codecai.net" \
+      org.opencontainers.image.vendor="Quasarke" \
+      org.opencontainers.image.licenses="Apache-2.0 AND BUSL-1.1"
+
+# Some vllm/vllm-openai images set ENTRYPOINT to api_server. We override it
+# at the bottom but make sure RUN steps don't trip over the entrypoint.
+USER root
+WORKDIR /opt/codec
+
+# ---------- 1. overlay codec patches on stock vLLM ----------
+# vLLM is already pip-installed in the base image (compiled .so extensions
+# included). The Codec PR is pure-Python (entrypoints/codec_*.py + protocol
+# additions), so we clone the fork and copy ONLY the source vllm/ tree on
+# top of the installed package — replaces .py files in place, leaves .so
+# extensions untouched (the source clone has no compiled artifacts to
+# collide with).
+#
+# Avoids `pip install --no-deps -e .` which fails on runtime images (no
+# build toolchain, vLLM's setup wants to compile native code).
+RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
+    apt-get update && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/* \
+ && git clone --depth 50 --branch "${CODEC_VLLM_REF}" "${CODEC_VLLM_REPO}" vllm-source \
+ && cd vllm-source \
+ && if [ -n "${CODEC_VLLM_COMMIT}" ]; then \
+        git fetch --depth 50 origin "${CODEC_VLLM_COMMIT}" \
+        && git checkout "${CODEC_VLLM_COMMIT}"; \
+    fi \
+ && git rev-parse HEAD > /opt/codec/CODEC_VLLM_SHA \
+ && git log -1 --pretty='%h %s' > /opt/codec/CODEC_VLLM_HEAD \
+ && cd / \
+ && VLLM_PATH=$(python3 -I -c "import vllm, pathlib; print(pathlib.Path(vllm.__file__).parent)") \
+ && case "${VLLM_PATH}" in /opt/codec/vllm-source/*) echo "ERROR: python imported the source clone, expected installed package" >&2; exit 1;; esac \
+ && echo "[codec] overlaying codec files into $VLLM_PATH" \
+ && for f in \
+        vllm/entrypoints/codec_agent.py \
+        vllm/entrypoints/codec_compression.py \
+        vllm/entrypoints/codec_frame.py \
+        vllm/entrypoints/openai/chat_completion/api_router.py \
+        vllm/entrypoints/openai/chat_completion/protocol.py \
+        vllm/entrypoints/openai/chat_completion/serving.py \
+        vllm/entrypoints/openai/completion/api_router.py \
+        vllm/entrypoints/openai/completion/protocol.py \
+        vllm/entrypoints/openai/completion/serving.py \
+    ; do \
+        src="/opt/codec/vllm-source/$f"; \
+        dst="${VLLM_PATH}/${f#vllm/}"; \
+        if [ ! -f "$src" ]; then echo "  MISSING $src" >&2; exit 1; fi; \
+        mkdir -p "$(dirname "$dst")"; \
+        cp "$src" "$dst"; \
+        echo "  ok $f"; \
+    done \
+ && pip install msgpack
+
+# ---------- 2. install codec-supervisor ----------
+COPY pyproject.toml /opt/codec/supervisor/pyproject.toml
+COPY codec_supervisor /opt/codec/supervisor/codec_supervisor
+COPY README.md /opt/codec/supervisor/README.md
+RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
+    pip install /opt/codec/supervisor
+
+# ---------- 3. runtime config ----------
+ENV CODEC_HOST=0.0.0.0 \
+    CODEC_PORT=8080 \
+    CODEC_BACKEND=vllm \
+    CODEC_BACKEND_HOST=127.0.0.1 \
+    CODEC_BACKEND_PORT=30000 \
+    CODEC_MODELS_DIR=/models \
+    CODEC_INITIAL_MODEL=Qwen/Qwen2.5-0.5B-Instruct \
+    CODEC_BACKEND_ARGS="--gpu-memory-utilization 0.85 --max-model-len 2048 --dtype auto" \
+    CODEC_LOG_LEVEL=INFO
+
+VOLUME ["/models"]
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=3 \
+  CMD python3 -c "import os,urllib.request,sys; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"CODEC_PORT\",\"8080\")}/health', timeout=4); sys.exit(0)" || exit 1
+
+COPY entrypoint.sh /opt/codec/entrypoint.sh
+RUN chmod +x /opt/codec/entrypoint.sh
+
+ENTRYPOINT ["/opt/codec/entrypoint.sh"]

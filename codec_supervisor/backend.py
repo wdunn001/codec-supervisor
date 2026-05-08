@@ -81,7 +81,7 @@ class TgiBackend:
 
 
 class VllmBackend:
-    """vLLM OpenAI-compatible server. Stub for future use."""
+    """vLLM OpenAI-compatible server."""
 
     name = "vllm"
     health_path = "/health"
@@ -107,10 +107,47 @@ class VllmBackend:
         ]
 
 
+class LlamaCppBackend:
+    """llama.cpp `llama-server` (the standalone HTTP server).
+
+    Accepts two kinds of model spec:
+      - Local path to a .gguf file → ``--model <path>``
+      - Hugging Face ``<owner>/<repo>:<filename-glob>`` → ``-hf <spec>``
+        (e.g. ``Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M``)
+    """
+
+    name = "llamacpp"
+    health_path = "/health"
+
+    def command(
+        self,
+        model_path: str,
+        host: str,
+        port: int,
+        extra_args: list[str],
+    ) -> list[str]:
+        argv: list[str] = ["llama-server", "--host", host, "--port", str(port)]
+        if model_path:
+            # HF id heuristic: contains "/" and ":" and isn't an absolute path.
+            looks_like_hf = (
+                "/" in model_path
+                and ":" in model_path
+                and not model_path.startswith("/")
+                and not model_path.startswith(".")
+            )
+            if looks_like_hf:
+                argv += ["-hf", model_path]
+            else:
+                argv += ["--model", model_path]
+        argv += list(extra_args)
+        return argv
+
+
 BACKENDS: dict[str, type] = {
     "sglang": SglangBackend,
     "tgi": TgiBackend,
     "vllm": VllmBackend,
+    "llamacpp": LlamaCppBackend,
 }
 
 

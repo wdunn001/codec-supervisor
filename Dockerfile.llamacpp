@@ -1,0 +1,131 @@
+# syntax=docker/dockerfile:1.7
+#
+# codec/llamacpp — easily-deployable Codec inference instance on top of llama.cpp.
+#
+# Unlike sglang and vLLM (Python — overlay via pip install -e .), llama.cpp
+# is C++ and the Codec patches change tools/server/server-context.cpp +
+# CMake. So we build llama-server from source against the wdunn001 fork.
+#
+# Multi-stage:
+#   1. CUDA devel — clone fork, cmake -DGGML_CUDA=ON, build llama-server
+#   2. CUDA runtime — copy llama-server + .so libs, install Python +
+#      codec-supervisor on top
+#
+# Layers:
+#   - Codec PR(s):  ggml-org/llama.cpp#22757 (binary transport), plus the
+#     stacked feat/codec-compression branch (server-side ToolWatcher,
+#     streaming gzip, zstd-dict-header docs).
+
+ARG UBUNTU_VERSION=24.04
+ARG CUDA_VERSION=12.8.1
+ARG BASE_CUDA_DEV=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
+ARG BASE_CUDA_RUN=nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+
+ARG CODEC_LLAMACPP_REPO=https://github.com/wdunn001/llama.cpp.git
+# Default to the stacked branch (binary transport + ToolWatcher + gzip).
+# Override with --build-arg CODEC_LLAMACPP_REF=feat/codec-binary-transport
+# for just the open PR's contents.
+ARG CODEC_LLAMACPP_REF=feat/codec-compression
+ARG CODEC_LLAMACPP_COMMIT=
+
+# Build for all common CUDA arches by default; override via --build-arg.
+ARG CUDA_DOCKER_ARCH=default
+
+# ---------- 1. build llama-server from the fork ----------
+FROM ${BASE_CUDA_DEV} AS build
+
+ARG CODEC_LLAMACPP_REPO
+ARG CODEC_LLAMACPP_REF
+ARG CODEC_LLAMACPP_COMMIT
+ARG CUDA_DOCKER_ARCH
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        gcc-14 g++-14 build-essential cmake git \
+        libssl-dev libgomp1 libcurl4-openssl-dev ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV CC=gcc-14 CXX=g++-14 CUDAHOSTCXX=g++-14
+
+WORKDIR /src
+RUN git clone --depth 50 --branch "${CODEC_LLAMACPP_REF}" "${CODEC_LLAMACPP_REPO}" llama.cpp \
+ && cd llama.cpp \
+ && if [ -n "${CODEC_LLAMACPP_COMMIT}" ]; then \
+        git fetch --depth 50 origin "${CODEC_LLAMACPP_COMMIT}" \
+        && git checkout "${CODEC_LLAMACPP_COMMIT}"; \
+    fi \
+ && git rev-parse HEAD > /src/CODEC_LLAMACPP_SHA \
+ && git log -1 --pretty='%h %s' > /src/CODEC_LLAMACPP_HEAD
+
+WORKDIR /src/llama.cpp
+RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
+        export CMAKE_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${CUDA_DOCKER_ARCH}"; \
+    fi \
+ && cmake -B build \
+        -DGGML_NATIVE=OFF \
+        -DGGML_CUDA=ON \
+        -DGGML_BACKEND_DL=OFF \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DLLAMA_BUILD_TESTS=OFF \
+        -DLLAMA_CURL=ON \
+        ${CMAKE_ARGS} . \
+ && cmake --build build --config Release -j$(nproc) --target llama-server
+
+# Static build — just the single binary needs to ship.
+RUN mkdir -p /out/bin \
+ && cp build/bin/llama-server /out/bin/
+
+# ---------- 2. runtime ----------
+FROM ${BASE_CUDA_RUN}
+
+ARG CODEC_LLAMACPP_REF
+
+LABEL org.opencontainers.image.title="codec-llamacpp" \
+      org.opencontainers.image.description="llama.cpp server with Codec PR (#22757) + codec-supervisor control plane" \
+      org.opencontainers.image.source="https://github.com/wdunn001/codec-supervisor" \
+      org.opencontainers.image.url="https://codecai.net" \
+      org.opencontainers.image.vendor="Quasarke" \
+      org.opencontainers.image.licenses="MIT AND BUSL-1.1"
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv \
+        libgomp1 libcurl4 ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Statically-linked binary — no shared libs to ship.
+COPY --from=build /out/bin/llama-server /usr/local/bin/llama-server
+COPY --from=build /src/CODEC_LLAMACPP_SHA /opt/codec/CODEC_LLAMACPP_SHA
+COPY --from=build /src/CODEC_LLAMACPP_HEAD /opt/codec/CODEC_LLAMACPP_HEAD
+
+# ---------- 3. install codec-supervisor ----------
+COPY pyproject.toml /opt/codec/supervisor/pyproject.toml
+COPY codec_supervisor /opt/codec/supervisor/codec_supervisor
+COPY README.md /opt/codec/supervisor/README.md
+RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
+    pip install --break-system-packages /opt/codec/supervisor
+
+# ---------- 4. runtime config ----------
+# llama-server uses --model <path-to-gguf>. Local model store is /models.
+# llama.cpp also supports HF download with `-hf <repo>:<file>`; for that path,
+# pass it via CODEC_BACKEND_ARGS rather than CODEC_INITIAL_MODEL.
+ENV CODEC_HOST=0.0.0.0 \
+    CODEC_PORT=8080 \
+    CODEC_BACKEND=llamacpp \
+    CODEC_BACKEND_HOST=127.0.0.1 \
+    CODEC_BACKEND_PORT=30000 \
+    CODEC_MODELS_DIR=/models \
+    CODEC_INITIAL_MODEL="Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M" \
+    CODEC_BACKEND_ARGS="--ctx-size 4096 --gpu-layers 999" \
+    CODEC_LOG_LEVEL=INFO
+
+VOLUME ["/models"]
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=3 \
+  CMD python3 -c "import os,urllib.request,sys; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"CODEC_PORT\",\"8080\")}/health', timeout=4); sys.exit(0)" || exit 1
+
+COPY entrypoint.sh /opt/codec/entrypoint.sh
+RUN chmod +x /opt/codec/entrypoint.sh
+
+ENTRYPOINT ["/opt/codec/entrypoint.sh"]
