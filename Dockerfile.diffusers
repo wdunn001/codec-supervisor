@@ -1,0 +1,133 @@
+# syntax=docker/dockerfile:1.7
+#
+# codec/diffusers — easily-deployable Codec inference instance on top of the
+# HuggingFace diffusers reference path.
+#
+# diffusers is a *library*, not a server, so our fork at wdunn001/diffusers
+# adds an `examples/codec_server/` FastAPI wrapper that:
+#   1. Loads a diffusers pipeline (StableDiffusionPipeline /
+#      StableVideoDiffusionPipeline / etc.).
+#   2. Exposes /v1/images/generations and /v1/videos/generations endpoints
+#      that emit Codec latent streams (msgpack/protobuf) instead of decoded
+#      pixels.
+#   3. Vendors a copy of codecai.server.latent_frame for the seven pipeline
+#      forward transforms.
+#
+# This image doubles as the **bench/golden perceptual-conformance reference**:
+# the torch + diffusers versions pinned here are the same ones the latent
+# bench methodology resolves SSIM / PSNR / LPIPS against. Bumping torch or
+# diffusers on this image therefore re-pins the perceptual contract — bump
+# `packages/bench/golden-builder/Dockerfile` in lockstep, or the bench cells
+# stop being comparable across runs.
+#
+# Like Dockerfile.comfyui, this image is built from the **fork**, not from a
+# PR overlay. We do not intend to upstream the codec_server example to
+# huggingface/diffusers; the fork is the canonical surface.
+
+ARG UBUNTU_VERSION=24.04
+ARG CUDA_VERSION=12.8.1
+ARG BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+
+ARG CODEC_DIFFUSERS_REPO=https://github.com/wdunn001/diffusers.git
+ARG CODEC_DIFFUSERS_REF=feat/codec-latent-transport
+ARG CODEC_DIFFUSERS_COMMIT=
+
+# These three are the perceptual-reference pin. Match against
+# packages/bench/golden-builder/Dockerfile in the main Codec repo.
+ARG TORCH_VERSION=2.5.1
+ARG TORCHVISION_VERSION=0.20.1
+ARG DIFFUSERS_REQUIREMENTS_EXTRA="accelerate>=0.27 transformers>=4.45 safetensors>=0.4 fastapi>=0.115 uvicorn[standard]>=0.32"
+
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.title="codec-diffusers" \
+      org.opencontainers.image.description="HuggingFace diffusers + codec_server reference (wdunn001/diffusers feat/codec-latent-transport) + codec-supervisor control plane. Doubles as the bench/golden perceptual-conformance reference." \
+      org.opencontainers.image.source="https://github.com/wdunn001/codec-supervisor" \
+      org.opencontainers.image.url="https://codecai.net" \
+      org.opencontainers.image.vendor="Quasarke" \
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT"
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv \
+        git ca-certificates curl \
+        libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG CODEC_DIFFUSERS_REPO
+ARG CODEC_DIFFUSERS_REF
+ARG CODEC_DIFFUSERS_COMMIT
+ARG TORCH_VERSION
+ARG TORCHVISION_VERSION
+ARG DIFFUSERS_REQUIREMENTS_EXTRA
+
+# ---------- 1. clone the fork (installed editable so codec_server can reach
+#               into diffusers internals — VAE encode/decode hooks).
+WORKDIR /opt/codec
+RUN git clone --depth 50 --branch "${CODEC_DIFFUSERS_REF}" "${CODEC_DIFFUSERS_REPO}" diffusers \
+ && cd diffusers \
+ && if [ -n "${CODEC_DIFFUSERS_COMMIT}" ]; then \
+        git fetch --depth 50 origin "${CODEC_DIFFUSERS_COMMIT}" \
+        && git checkout "${CODEC_DIFFUSERS_COMMIT}"; \
+    fi \
+ && git rev-parse HEAD > /opt/codec/CODEC_DIFFUSERS_SHA \
+ && git log -1 --pretty='%h %s' > /opt/codec/CODEC_DIFFUSERS_HEAD
+
+# ---------- 2. python deps ----------
+RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
+    pip install --break-system-packages --upgrade pip \
+ && pip install --break-system-packages \
+        --index-url https://download.pytorch.org/whl/cu124 \
+        torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION} \
+ && pip install --break-system-packages \
+        msgspec brotli zstandard ${DIFFUSERS_REQUIREMENTS_EXTRA} \
+ && pip install --break-system-packages -e /opt/codec/diffusers
+
+# ---------- 2b. fetch reference Codec latent zstd dicts ----------
+RUN mkdir -p /opt/codec/dicts/latents \
+ && curl -fsSL -o /opt/codec/dicts/latents/sd-vae-ft-mse-msgpack-int8-v1.dict \
+      https://raw.githubusercontent.com/wdunn001/Codec/main/dictionaries/latents/sd-vae-ft-mse-msgpack-int8-v1.dict \
+      || echo "warning: latent dict fetch failed — fork will fall back to gzip"
+
+# ---------- 3. install codec-supervisor ----------
+COPY pyproject.toml /opt/codec/supervisor/pyproject.toml
+COPY codec_supervisor /opt/codec/supervisor/codec_supervisor
+COPY README.md /opt/codec/supervisor/README.md
+RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
+    pip install --break-system-packages /opt/codec/supervisor
+
+# ---------- 4. record the perceptual pin ----------
+# The bench fingerprint validator reads these at container start so every
+# golden cell can record the (torch_version, diffusers_version, fork_sha)
+# triple it was rendered against. Mismatch with the bench-side
+# methodology.modality.quality_reference fails the validator fast.
+RUN python3 -c "import torch, diffusers; print(f'{torch.__version__}\\n{diffusers.__version__}')" > /opt/codec/PERCEPTUAL_REFERENCE_PINS
+
+# ---------- 5. runtime config ----------
+# diffusers/examples/codec_server listens on 127.0.0.1:8200 by default
+# (avoids ComfyUI's 8188 in case both run on the same host for A/B).
+# CODEC_INITIAL_MODEL names a diffusers HF repo; the codec_server entrypoint
+# materialises it via from_pretrained on first boot.
+ENV CODEC_HOST=0.0.0.0 \
+    CODEC_PORT=8080 \
+    CODEC_BACKEND=diffusers \
+    CODEC_BACKEND_HOST=127.0.0.1 \
+    CODEC_BACKEND_PORT=8200 \
+    CODEC_MODELS_DIR=/models \
+    CODEC_INITIAL_MODEL="stabilityai/stable-diffusion-2-1-base" \
+    CODEC_INITIAL_LATENT_SPACE="stabilityai/sd-vae-ft-mse" \
+    CODEC_BACKEND_ARGS="" \
+    CODEC_LATENT_DICTS_DIR=/opt/codec/dicts/latents \
+    CODEC_LOG_LEVEL=INFO \
+    HF_HOME=/root/.cache/huggingface
+
+VOLUME ["/models"]
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=3 \
+  CMD python3 -c "import os,urllib.request,sys; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"CODEC_PORT\",\"8080\")}/health', timeout=4); sys.exit(0)" || exit 1
+
+COPY entrypoint.sh /opt/codec/entrypoint.sh
+RUN chmod +x /opt/codec/entrypoint.sh
+
+ENTRYPOINT ["/opt/codec/entrypoint.sh"]

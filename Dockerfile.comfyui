@@ -1,0 +1,143 @@
+# syntax=docker/dockerfile:1.7
+#
+# codec/comfyui — easily-deployable Codec inference instance on top of ComfyUI.
+#
+# Latent-modality (v0.3+) image: ComfyUI is the image/video generation engine
+# behind the Codec latent stream surface. Unlike vLLM and SGLang (text engines
+# we patch via upstream PRs), ComfyUI's codec extension is maintained as a
+# downstream **fork** at wdunn001/ComfyUI — we don't intend to upstream it.
+# Our fork is the canonical surface; this Dockerfile builds the codec image
+# directly from it.
+#
+# Layers:
+#   1. wdunn001/ComfyUI feat/codec-latent-transport — the fork that ships the
+#      /codec/* latent-stream endpoints, the seven pipeline forward
+#      transforms (vendored copy of codecai.server.latent_frame), and the
+#      codec_compression overlay (zstd dict negotiation + Codec-Zstd-Dict
+#      + Codec-Latent-Map response headers).
+#   2. codec-supervisor — admin/control-plane FastAPI on :8080.
+#
+# Runtime layout:
+#   - ComfyUI listens on 127.0.0.1:8188 inside the container.
+#   - codec-supervisor proxies external :8080 → :8188 with admin endpoints
+#     overlaid (model loading, dict swaps, latent-space-map registration).
+#
+# Note: this image is a parallel sibling of Dockerfile.{vllm,sglang,llamacpp}
+# in this same repo. The latent modality is fully separate from the text
+# modalities at the protocol level (see spec/PROTOCOL.md §Modalities) so the
+# images don't share content beyond the supervisor itself.
+
+ARG UBUNTU_VERSION=24.04
+ARG CUDA_VERSION=12.8.1
+ARG BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+
+ARG CODEC_COMFYUI_REPO=https://github.com/wdunn001/ComfyUI.git
+ARG CODEC_COMFYUI_REF=feat/codec-latent-transport
+ARG CODEC_COMFYUI_COMMIT=
+
+# Pin torch + diffusers to the same versions used by the bench/golden image —
+# the latent-conformance contract requires the server's decode path to match
+# the perceptual reference. Override both via --build-arg if the
+# golden-builder image bumps.
+ARG TORCH_VERSION=2.5.1
+ARG TORCHVISION_VERSION=0.20.1
+ARG DIFFUSERS_VERSION=0.31.0
+
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.title="codec-comfyui" \
+      org.opencontainers.image.description="ComfyUI with Codec latent-modality fork (wdunn001/ComfyUI feat/codec-latent-transport) + codec-supervisor control plane" \
+      org.opencontainers.image.source="https://github.com/wdunn001/codec-supervisor" \
+      org.opencontainers.image.url="https://codecai.net" \
+      org.opencontainers.image.vendor="Quasarke" \
+      org.opencontainers.image.licenses="MIT"
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv \
+        git ca-certificates curl \
+        libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+# libgl1 + libglib2.0-0 are runtime deps for opencv (a transitive dep of
+# several ComfyUI custom nodes the fork bundles). Without them, image-IO
+# nodes import-fail at server startup.
+
+ARG CODEC_COMFYUI_REPO
+ARG CODEC_COMFYUI_REF
+ARG CODEC_COMFYUI_COMMIT
+ARG TORCH_VERSION
+ARG TORCHVISION_VERSION
+ARG DIFFUSERS_VERSION
+
+# ---------- 1. clone the fork + pin commit ----------
+WORKDIR /opt/codec
+RUN git clone --depth 50 --branch "${CODEC_COMFYUI_REF}" "${CODEC_COMFYUI_REPO}" comfyui \
+ && cd comfyui \
+ && if [ -n "${CODEC_COMFYUI_COMMIT}" ]; then \
+        git fetch --depth 50 origin "${CODEC_COMFYUI_COMMIT}" \
+        && git checkout "${CODEC_COMFYUI_COMMIT}"; \
+    fi \
+ && git rev-parse HEAD > /opt/codec/CODEC_COMFYUI_SHA \
+ && git log -1 --pretty='%h %s' > /opt/codec/CODEC_COMFYUI_HEAD
+
+# ---------- 2. python deps ----------
+# torch from the official CUDA wheel index; ComfyUI's requirements.txt covers
+# the rest.
+RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
+    pip install --break-system-packages --upgrade pip \
+ && pip install --break-system-packages \
+        --index-url https://download.pytorch.org/whl/cu124 \
+        torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION} \
+ && pip install --break-system-packages \
+        diffusers==${DIFFUSERS_VERSION} \
+        msgspec brotli zstandard \
+ && pip install --break-system-packages -r /opt/codec/comfyui/requirements.txt
+
+# ---------- 2b. fetch reference Codec zstd dicts (latent-side) ----------
+# Mirrors the text-side dict layout in Dockerfile.{vllm,sglang}. The latent
+# dicts are keyed by (latent_space_id, format, pipeline) — the supervisor's
+# dict-loader picks the right one per request based on the negotiated
+# pipeline. The fork's startup hook reads CODEC_LATENT_DICTS_DIR and pre-loads
+# every .dict file matching the active latent-space-map's
+# zstd_dictionaries[] entries.
+RUN mkdir -p /opt/codec/dicts/latents \
+ && curl -fsSL -o /opt/codec/dicts/latents/sd-vae-ft-mse-msgpack-int8-v1.dict \
+      https://raw.githubusercontent.com/wdunn001/Codec/main/dictionaries/latents/sd-vae-ft-mse-msgpack-int8-v1.dict \
+      || echo "warning: latent dict fetch failed — fork will fall back to gzip"
+
+# ---------- 3. install codec-supervisor ----------
+COPY pyproject.toml /opt/codec/supervisor/pyproject.toml
+COPY codec_supervisor /opt/codec/supervisor/codec_supervisor
+COPY README.md /opt/codec/supervisor/README.md
+RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
+    pip install --break-system-packages /opt/codec/supervisor
+
+# ---------- 4. runtime config ----------
+# ComfyUI's own listener is on 127.0.0.1:8188 inside the container; the
+# supervisor handles external :8080. CODEC_INITIAL_MODEL names a HuggingFace
+# diffusers checkpoint repo; the supervisor materialises it into the ComfyUI
+# /models tree on first boot. CODEC_INITIAL_LATENT_SPACE points at a
+# latent-space-map (URL or .well-known origin) the fork loads at startup so
+# /codec/info reports the active space + decoder fingerprint.
+ENV CODEC_HOST=0.0.0.0 \
+    CODEC_PORT=8080 \
+    CODEC_BACKEND=comfyui \
+    CODEC_BACKEND_HOST=127.0.0.1 \
+    CODEC_BACKEND_PORT=8188 \
+    CODEC_MODELS_DIR=/models \
+    CODEC_INITIAL_MODEL="stabilityai/stable-diffusion-2-1-base" \
+    CODEC_INITIAL_LATENT_SPACE="stabilityai/sd-vae-ft-mse" \
+    CODEC_BACKEND_ARGS="--listen 127.0.0.1 --port 8188" \
+    CODEC_LATENT_DICTS_DIR=/opt/codec/dicts/latents \
+    CODEC_LOG_LEVEL=INFO
+
+VOLUME ["/models"]
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=3 \
+  CMD python3 -c "import os,urllib.request,sys; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"CODEC_PORT\",\"8080\")}/health', timeout=4); sys.exit(0)" || exit 1
+
+COPY entrypoint.sh /opt/codec/entrypoint.sh
+RUN chmod +x /opt/codec/entrypoint.sh
+
+ENTRYPOINT ["/opt/codec/entrypoint.sh"]

@@ -1,7 +1,14 @@
 # Local single-GPU run. Models persist in the `models` volume across restarts.
 #
-#   docker compose up -d
+#   docker compose up -d                                     # default text engine (sglang)
+#   docker compose --profile latents up -d                   # add comfyui + diffusers
+#   docker compose --profile comfyui up -d codec-comfyui     # only comfyui
+#   docker compose --profile diffusers up -d codec-diffusers # only diffusers
 #   docker compose logs -f
+#
+# Profiles keep the latent (image/video) services from being pulled by a
+# default `up` since their images are large (CUDA + torch + diffusers ~ 10 GB)
+# and most users only want the text path on first run.
 #
 # Override anything via .env (see .env.example) or inline:
 #   CODEC_INITIAL_MODEL=Qwen/Qwen2.5-7B-Instruct docker compose up -d
@@ -23,6 +30,72 @@ services:
     environment:
       CODEC_INITIAL_MODEL: ${CODEC_INITIAL_MODEL:-Qwen/Qwen2.5-0.5B-Instruct}
       CODEC_BACKEND_ARGS: ${CODEC_BACKEND_ARGS:---mem-fraction-static 0.85 --attention-backend triton}
+      CODEC_LOG_LEVEL: ${CODEC_LOG_LEVEL:-INFO}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - models:/models
+      - hf-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${CODEC_GPUS:-1}
+              capabilities: [gpu]
+
+  # ── Latent modality (v0.3+) — image/video generation ────────────────────────
+  # Both services share the latent-space-map registry under .well-known/codec/
+  # latents/<id>.json and the latent zstd dict pool. They run on different
+  # internal backend ports so an A/B between ComfyUI and diffusers can run
+  # side-by-side on the same host (different external ports).
+
+  codec-comfyui:
+    image: codec/comfyui:dev
+    profiles: ["latents", "comfyui"]
+    build:
+      context: .
+      dockerfile: Dockerfile.comfyui
+      args:
+        CODEC_COMFYUI_REF: ${CODEC_COMFYUI_REF:-feat/codec-latent-transport}
+        CODEC_COMFYUI_COMMIT: ${CODEC_COMFYUI_COMMIT:-}
+    container_name: codec-comfyui
+    restart: unless-stopped
+    shm_size: "8gb"
+    ports:
+      - "${CODEC_COMFYUI_PORT:-8090}:8080"
+    environment:
+      CODEC_INITIAL_MODEL: ${CODEC_COMFYUI_INITIAL_MODEL:-stabilityai/stable-diffusion-2-1-base}
+      CODEC_INITIAL_LATENT_SPACE: ${CODEC_COMFYUI_LATENT_SPACE:-stabilityai/sd-vae-ft-mse}
+      CODEC_LOG_LEVEL: ${CODEC_LOG_LEVEL:-INFO}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - models:/models
+      - hf-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${CODEC_GPUS:-1}
+              capabilities: [gpu]
+
+  codec-diffusers:
+    image: codec/diffusers:dev
+    profiles: ["latents", "diffusers"]
+    build:
+      context: .
+      dockerfile: Dockerfile.diffusers
+      args:
+        CODEC_DIFFUSERS_REF: ${CODEC_DIFFUSERS_REF:-feat/codec-latent-transport}
+        CODEC_DIFFUSERS_COMMIT: ${CODEC_DIFFUSERS_COMMIT:-}
+    container_name: codec-diffusers
+    restart: unless-stopped
+    shm_size: "8gb"
+    ports:
+      - "${CODEC_DIFFUSERS_PORT:-8091}:8080"
+    environment:
+      CODEC_INITIAL_MODEL: ${CODEC_DIFFUSERS_INITIAL_MODEL:-stabilityai/stable-diffusion-2-1-base}
+      CODEC_INITIAL_LATENT_SPACE: ${CODEC_DIFFUSERS_LATENT_SPACE:-stabilityai/sd-vae-ft-mse}
       CODEC_LOG_LEVEL: ${CODEC_LOG_LEVEL:-INFO}
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:

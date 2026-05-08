@@ -191,6 +191,25 @@ The Docker image overlays [`wdunn001/sglang`](https://github.com/wdunn001/sglang
 
 When the PRs merge upstream, the Dockerfile drops the overlay and just `pip install codec-supervisor` against `lmsysorg/sglang:<release>`.
 
+### Latent modality (image / video, v0.3+)
+
+`Dockerfile.comfyui` and `Dockerfile.diffusers` are siblings of the text-engine Dockerfiles in this repo, sized for the latent-stream surface defined in [Codec spec v0.3 §Latent Modality](https://github.com/wdunn001/Codec/blob/main/spec/PROTOCOL.md). Both image-gen images share the same `.well-known/codec/latents/<id>.json` registry and the same zstd-dict pool, just with different inference engines underneath.
+
+| Image | Source | Posture |
+|---|---|---|
+| `codec/comfyui:dev`   | [`wdunn001/ComfyUI`](https://github.com/wdunn001/ComfyUI) `feat/codec-latent-transport` | **Fork-only — no upstream PR planned.** ComfyUI's plugin/custom-node architecture would let us ship the codec endpoints as a custom node, but the latent-frame emitter and zstd-dict overlay touch enough of the request loop that maintaining a downstream fork is cleaner than threading hooks. |
+| `codec/diffusers:dev` | [`wdunn001/diffusers`](https://github.com/wdunn001/diffusers) `feat/codec-latent-transport` | **Fork-only — no upstream PR planned.** diffusers is a library; our fork adds an `examples/codec_server/` FastAPI wrapper. This image doubles as the **bench/golden perceptual-conformance reference**: the pinned `torch` + `diffusers` versions here define the SSIM / PSNR / LPIPS contract every latent bench cell resolves against. |
+
+Both images are gated behind compose profiles so a default `docker compose up` doesn't pull them (the image layers are heavy: CUDA + torch + diffusers ~ 10 GB).
+
+```bash
+docker compose --profile latents up -d           # both image-gen services
+docker compose --profile comfyui up -d codec-comfyui
+docker compose --profile diffusers up -d codec-diffusers
+```
+
+The text-engine forks (`vllm`, `sglang`, `llama.cpp`) remain upstream-PR-track; only the latent forks are explicitly fork-only.
+
 ## Adding a new backend
 
 Implement the [`Backend`](codec_supervisor/backend.py) protocol — three things: a `name`, a `health_path`, and a `command(model_path, host, port, extra_args)` that returns argv. Register it in `BACKENDS`. That's it. Stubs for TGI and vLLM are already there.
