@@ -1,0 +1,109 @@
+# syntax=docker/dockerfile:1.7
+#
+# codec/metamcp — MetaMCP gateway with the Codec binary transport patch
+# applied. Drop-in for any MCP client; opt-in per-request via
+# `?stream_format=msgpack` (or `protobuf`) or `Accept: application/x-codec-msgpack`.
+#
+# Unlike codec-{sglang,vllm,llamacpp} this image doesn't bolt on a
+# Python control-plane — MetaMCP itself already ships an admin UI
+# (the Next.js frontend) for namespace + server management, so there's
+# nothing for codec-supervisor to add. We just build the fork.
+#
+# Layers:
+#   1. node:20 + pnpm 10 — base, matches MetaMCP's own Dockerfile
+#   2. clone wdunn001/metamcp @ feat/codec-binary-transport
+#   3. pnpm install + pnpm build (frontend Next.js + backend Express)
+#   4. runtime: just node + the built dist + node_modules
+#
+# Layout matches the upstream Dockerfile so admins who've followed
+# MetaMCP's own deployment guide can swap in this image with no
+# config changes.
+
+ARG NODE_VERSION=20
+ARG PNPM_VERSION=10.12.0
+
+ARG CODEC_METAMCP_REPO=https://github.com/wdunn001/metamcp.git
+ARG CODEC_METAMCP_REF=feat/codec-binary-transport
+ARG CODEC_METAMCP_COMMIT=
+
+# ---------- 1. base ----------
+FROM node:${NODE_VERSION}-bookworm-slim AS base
+ARG PNPM_VERSION
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g pnpm@${PNPM_VERSION}
+
+WORKDIR /src
+
+# ---------- 2. fetch the fork ----------
+FROM base AS fetch
+ARG CODEC_METAMCP_REPO
+ARG CODEC_METAMCP_REF
+ARG CODEC_METAMCP_COMMIT
+
+RUN git clone --depth 50 --branch "${CODEC_METAMCP_REF}" "${CODEC_METAMCP_REPO}" /src/metamcp \
+ && cd /src/metamcp \
+ && if [ -n "${CODEC_METAMCP_COMMIT}" ]; then \
+        git fetch --depth 50 origin "${CODEC_METAMCP_COMMIT}" \
+        && git checkout "${CODEC_METAMCP_COMMIT}"; \
+    fi \
+ && git rev-parse HEAD > /src/CODEC_METAMCP_SHA \
+ && git log -1 --pretty='%h %s' > /src/CODEC_METAMCP_HEAD
+
+# ---------- 3. install + build ----------
+FROM base AS build
+WORKDIR /app
+
+COPY --from=fetch /src/metamcp /app
+
+# The Codec patch adds @msgpack/msgpack, which isn't pinned in the
+# upstream pnpm-lock.yaml yet — `--no-frozen-lockfile` lets pnpm
+# resolve it without rewriting the entire lockfile against a fresh
+# registry snapshot. Until the PR lands and the lockfile is updated
+# upstream, this is the lever; once it's in main we can flip back to
+# `--frozen-lockfile` and drop this comment.
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN pnpm install --no-frozen-lockfile
+
+RUN pnpm build
+
+# ---------- 4. runtime ----------
+FROM node:${NODE_VERSION}-bookworm-slim
+ARG PNPM_VERSION
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g pnpm@${PNPM_VERSION}
+
+LABEL org.opencontainers.image.title="codec-metamcp" \
+      org.opencontainers.image.description="MetaMCP with Codec binary transport (PR metatool-ai/metamcp#287)" \
+      org.opencontainers.image.source="https://github.com/wdunn001/codec-supervisor" \
+      org.opencontainers.image.url="https://codecai.net" \
+      org.opencontainers.image.vendor="Quasarke" \
+      org.opencontainers.image.licenses="Apache-2.0 AND BUSL-1.1"
+
+WORKDIR /app
+
+# Bring the built monorepo across. We need:
+#   - apps/frontend/.next + apps/frontend/public + apps/frontend/node_modules
+#   - apps/backend/dist + apps/backend/node_modules
+#   - root node_modules + pnpm workspace metadata
+COPY --from=build /app /app
+COPY --from=fetch /src/CODEC_METAMCP_SHA /opt/codec/CODEC_METAMCP_SHA
+COPY --from=fetch /src/CODEC_METAMCP_HEAD /opt/codec/CODEC_METAMCP_HEAD
+
+# Default port is 12008 to match upstream MetaMCP. Override via -p
+# when running.
+ENV APP_URL=http://localhost:12008 \
+    NEXT_TELEMETRY_DISABLED=1
+EXPOSE 12008
+
+# Use the upstream entrypoint script verbatim — it runs migrations,
+# spawns the backend, and serves the frontend in one process tree.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=2m --retries=3 \
+  CMD curl -fsS http://localhost:12008/api/health || exit 1
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
