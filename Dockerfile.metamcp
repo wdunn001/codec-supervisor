@@ -90,11 +90,19 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         ca-certificates curl postgresql-client \
  && rm -rf /var/lib/apt/lists/* \
- && npm install -g pnpm@${PNPM_VERSION}
+ && npm install -g pnpm@${PNPM_VERSION} \
+ && curl -LsSf https://astral.sh/uv/install.sh \
+        | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh
 # postgresql-client provides `pg_isready` — upstream's
 # docker-entrypoint.sh calls it in a wait-for-postgres loop before
 # running drizzle migrations and spawning backend+frontend. Without
 # it the entrypoint spins forever logging 'pg_isready: not found'.
+#
+# uv (with uvx) is layered in for MCP servers configured to spawn via
+# `uvx <pkg>` — most notably `mcp-server-time` and other lightweight
+# Python-based servers. Installing into /usr/local/bin keeps it on
+# PATH for the non-root nextjs user. Without uv the gateway still
+# runs but those MCP-server entries fail with `spawn uvx ENOENT`.
 
 # Match the upstream image's user/group so volume mounts ported from
 # upstream metamcp stay compatible.
@@ -135,9 +143,21 @@ RUN chmod +x /app/docker-entrypoint.sh
 COPY --from=fetch /src/CODEC_METAMCP_SHA  /opt/codec/CODEC_METAMCP_SHA
 COPY --from=fetch /src/CODEC_METAMCP_HEAD /opt/codec/CODEC_METAMCP_HEAD
 
+# Pre-trained MCP-shaped zstd dict. Trained on 303 unique msgpack samples
+# from live-bench replay (78.8% holdout gain over no-dict zstd — 4.7×
+# compression on top of the 3.6× msgpack+gzip baseline). codec-compression.ts
+# loads it eagerly at module init via CODEC_MCP_ZSTD_MSGPACK_DICT_PATH;
+# negotiateResponseEncoding gates `zstd` on dict-loaded.
+ARG CODEC_MAPS_RAW=https://raw.githubusercontent.com/wdunn001/Codec/main/dictionaries
+RUN mkdir -p /opt/codec/dicts \
+ && curl -fsSL -o /opt/codec/dicts/mcp-msgpack-v1.dict \
+      "${CODEC_MAPS_RAW}/mcp-msgpack-msgpack-v1.dict" \
+ || echo "warning: MCP dict fetch failed — gateway falls through to gzip"
+
 USER nextjs
 
-ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    CODEC_MCP_ZSTD_MSGPACK_DICT_PATH=/opt/codec/dicts/mcp-msgpack-v1.dict
 EXPOSE 12008
 
 HEALTHCHECK --interval=30s --timeout=30s --start-period=2m --retries=3 \
