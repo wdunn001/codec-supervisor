@@ -7,19 +7,21 @@ A backend-agnostic supervisor / control plane for inference servers. Wraps an Op
 - **Hot swap** — `POST /admin/load` restarts the backend with a different model. No container restart.
 - **Easily deployable** — one Docker image bundles the engine + the [Codec PRs](#codec-patches) + the supervisor. `docker run` and you have a working Codec inference instance.
 
-## Image catalog (released v0.3.0)
+## Image catalog (current v0.3.x)
 
 This repo's [`release.yml` workflow](.github/workflows/release.yml) builds and pushes the following images on every `v*` git tag. Tags emitted per image: `:vX.Y.Z` (semver, immutable) · `:latest` (moves with each release) · `:sha-<git7>` (immutable git-tree pin for hotfixes).
 
-| Image                                                                          | Engine fork                                                                                       | Modality              |
-|--------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|-----------------------|
-| [`wdunn001/codec-sglang`](https://hub.docker.com/r/wdunn001/codec-sglang)      | sglang + Codec PRs #24483, #24557                                                                 | text-tokens           |
-| [`wdunn001/codec-vllm`](https://hub.docker.com/r/wdunn001/codec-vllm)          | vLLM + Codec PR #41765                                                                            | text-tokens           |
-| [`wdunn001/codec-llamacpp`](https://hub.docker.com/r/wdunn001/codec-llamacpp)  | llama.cpp + Codec PR #22757 (covers Ollama too)                                                   | text-tokens           |
-| [`wdunn001/codec-metamcp`](https://hub.docker.com/r/wdunn001/codec-metamcp)    | [`wdunn001/metamcp`](https://github.com/wdunn001/metamcp) `feat/codec-binary-transport`           | MCP gateway           |
-| [`wdunn001/codec-comfyui`](https://hub.docker.com/r/wdunn001/codec-comfyui)    | [`wdunn001/ComfyUI`](https://github.com/wdunn001/ComfyUI) `feat/codec-latent-transport`           | latents (v0.3)        |
-| [`wdunn001/codec-diffusers`](https://hub.docker.com/r/wdunn001/codec-diffusers) | [`wdunn001/diffusers`](https://github.com/wdunn001/diffusers) `feat/codec-latent-transport`       | latents (v0.3)        |
-| [`wdunn001/codec-time-leaf`](https://hub.docker.com/r/wdunn001/codec-time-leaf) | Reference Codec-aware MCP server ([`@codecai/codec-time-leaf`](https://www.npmjs.com/package/@codecai/codec-time-leaf)) | MCP tool (v0.3) |
+| Image                                                                          | Current tag | Engine fork                                                                                       | Modality              |
+|--------------------------------------------------------------------------------|:-----------:|---------------------------------------------------------------------------------------------------|-----------------------|
+| [`wdunn001/codec-sglang`](https://hub.docker.com/r/wdunn001/codec-sglang)      | latest      | sglang + Codec PRs #24483, #24557                                                                 | text-tokens           |
+| [`wdunn001/codec-vllm`](https://hub.docker.com/r/wdunn001/codec-vllm)          | latest      | vLLM + Codec PR #41765                                                                            | text-tokens           |
+| [`wdunn001/codec-llamacpp`](https://hub.docker.com/r/wdunn001/codec-llamacpp)  | latest      | llama.cpp + Codec PR #22757 (covers Ollama too)                                                   | text-tokens           |
+| [`wdunn001/codec-metamcp`](https://hub.docker.com/r/wdunn001/codec-metamcp)    | **v0.3.2**  | [`wdunn001/metamcp`](https://github.com/wdunn001/metamcp) `feat/codec-binary-transport`           | MCP gateway (with leaf-mode bypass) |
+| [`wdunn001/codec-time-leaf`](https://hub.docker.com/r/wdunn001/codec-time-leaf) | **v0.3.2**  | Reference Codec-aware MCP server ([`@codecai/codec-time-leaf`](https://www.npmjs.com/package/@codecai/codec-time-leaf)) | MCP tool (v0.3) |
+| [`wdunn001/codec-comfyui`](https://hub.docker.com/r/wdunn001/codec-comfyui)    | **v0.3.1**  | [`wdunn001/ComfyUI`](https://github.com/wdunn001/ComfyUI) `feat/codec-latent-transport`           | latents (v0.3)        |
+| [`wdunn001/codec-diffusers`](https://hub.docker.com/r/wdunn001/codec-diffusers) | **v0.3.4**  | [`wdunn001/diffusers`](https://github.com/wdunn001/diffusers) `feat/codec-latent-transport`       | latents (v0.3) — first end-to-end run [validated](https://github.com/wdunn001/Codec/tree/main/packages/bench/results/2026-05-09T13-01-55Z/latent) on the lab |
+
+The v0.3.x point-release cadence reflects coordinated fixes that landed across Codec / metamcp / supervisor on 2026-05-09: leaf-mode bypass observable end-to-end (`[Codec][leaf]` log fires), per-block `_meta` wire shape (replaces the SDK-rejected sibling-block form), DiffusersBackend + ComfyUIBackend registered, and the latent Dockerfiles' `pip --ignore-installed pip` fix for the debian-base CUDA image. See [Codec/changelog](https://codecai.net/changelog/) for the customer-facing trail.
 
 To cut a release: `git tag v0.3.x && git push origin v0.3.x`. The workflow runs `docker buildx` against each Dockerfile in parallel and pushes once green. Secrets required: `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN`.
 
