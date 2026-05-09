@@ -143,11 +143,85 @@ class LlamaCppBackend:
         return argv
 
 
+class DiffusersBackend:
+    """HuggingFace diffusers reference codec_server (latent modality, v0.3+).
+
+    Spawns ``python -m codec_server`` from the wdunn001/diffusers fork's
+    ``examples/codec_server/`` package. The CLI reads its model + latent
+    space + bind addr from a mix of ``CODEC_*`` env vars and the flags
+    we pass below.
+
+    Model spec is a HuggingFace diffusers repo id (e.g.
+    ``stabilityai/stable-diffusion-2-1-base``). The latent space the
+    server's bytes resolve against is named separately via the
+    ``CODEC_INITIAL_LATENT_SPACE`` env var (Dockerfile.diffusers default
+    is ``stabilityai/sd-vae-ft-mse``).
+    """
+
+    name = "diffusers"
+    health_path = "/health"
+
+    def command(
+        self,
+        model_path: str,
+        host: str,
+        port: int,
+        extra_args: list[str],
+    ) -> list[str]:
+        argv: list[str] = [
+            "python",
+            "-m",
+            "codec_server",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ]
+        if model_path:
+            argv += ["--model", model_path]
+        argv += list(extra_args)
+        return argv
+
+
+class ComfyUIBackend:
+    """ComfyUI fork at wdunn001/ComfyUI feat/codec-latent-transport.
+
+    ComfyUI's main.py is the entry point; the codec patch adds
+    ``/codec/*`` latent-stream endpoints alongside the standard ones.
+    Model loading is workflow-driven, not CLI-driven, so the
+    ``model_path`` argument is informational here — the active model is
+    whichever the loaded workflow requests.
+    """
+
+    name = "comfyui"
+    health_path = "/system_stats"
+
+    def command(
+        self,
+        model_path: str,
+        host: str,
+        port: int,
+        extra_args: list[str],
+    ) -> list[str]:
+        argv: list[str] = [
+            "python",
+            "/opt/codec/comfyui/main.py",
+            "--listen",
+            host,
+            "--port",
+            str(port),
+        ]
+        argv += list(extra_args)
+        return argv
+
+
 BACKENDS: dict[str, type] = {
     "sglang": SglangBackend,
     "tgi": TgiBackend,
     "vllm": VllmBackend,
     "llamacpp": LlamaCppBackend,
+    "diffusers": DiffusersBackend,
+    "comfyui": ComfyUIBackend,
 }
 
 
