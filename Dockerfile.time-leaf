@@ -60,6 +60,8 @@ RUN git clone --depth 1 --branch ${CODEC_REF} ${CODEC_REPO} codec
 RUN if [ -n "${CODEC_COMMIT}" ]; then \
         cd codec && git fetch --depth 1 origin ${CODEC_COMMIT} && git checkout ${CODEC_COMMIT} ; \
     fi
+# Capture the fork SHA before we lose the git binary in the builder stage.
+RUN cd /opt/codec && git rev-parse HEAD > /opt/codec/CODEC_SHA
 
 # ---------- 2. builder ----------
 FROM base AS builder
@@ -77,8 +79,8 @@ RUN npm run build --workspace=@codecai/web \
  && npm run build --workspace=@codecai/mcp-leaf \
  && npm run build --workspace=@codecai/codec-time-leaf
 
-# Capture the fork SHA for the runtime LABEL.
-RUN cd /opt/codec && git rev-parse HEAD > /opt/CODEC_SHA
+# CODEC_SHA is captured in the fetch stage (where git is available) and
+# carried through via the COPY in builder 1/5.
 
 # ---------- 3. runtime ----------
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
@@ -100,7 +102,7 @@ WORKDIR /opt/codec
 COPY --from=builder --chown=node:node /opt/codec/node_modules    /opt/codec/node_modules
 COPY --from=builder --chown=node:node /opt/codec/packages/web    /opt/codec/packages/web
 COPY --from=builder --chown=node:node /opt/codec/packages/mcp-leaf /opt/codec/packages/mcp-leaf
-COPY --from=builder --chown=node:node /opt/CODEC_SHA              /opt/codec/CODEC_SHA
+COPY --from=builder --chown=node:node /opt/codec/CODEC_SHA              /opt/codec/CODEC_SHA
 COPY --from=builder --chown=node:node /opt/codec/package.json     /opt/codec/package.json
 COPY --from=builder --chown=node:node /opt/codec/package-lock.json /opt/codec/package-lock.json
 
