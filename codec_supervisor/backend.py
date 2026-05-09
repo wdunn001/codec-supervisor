@@ -168,8 +168,11 @@ class DiffusersBackend:
         port: int,
         extra_args: list[str],
     ) -> list[str]:
+        # python3 (not python) — the slim CUDA base image only ships
+        # python3 in PATH; the unversioned `python` symlink isn't
+        # installed by python3-minimal in debian.
         argv: list[str] = [
-            "python",
+            "python3",
             "-m",
             "codec_server",
             "--host",
@@ -204,7 +207,7 @@ class ComfyUIBackend:
         extra_args: list[str],
     ) -> list[str]:
         argv: list[str] = [
-            "python",
+            "python3",  # slim CUDA base ships python3 only, no `python` symlink
             "/opt/codec/comfyui/main.py",
             "--listen",
             host,
