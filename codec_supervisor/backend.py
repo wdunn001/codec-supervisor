@@ -169,8 +169,12 @@ class DiffusersBackend:
         extra_args: list[str],
     ) -> list[str]:
         # python3 (not python) — the slim CUDA base image only ships
-        # python3 in PATH; the unversioned `python` symlink isn't
-        # installed by python3-minimal in debian.
+        # python3 in PATH; no unversioned `python` symlink. `-m
+        # codec_server` requires the package to be importable; the
+        # Dockerfile sets PYTHONPATH=/opt/codec/diffusers/examples so
+        # this works (the codec_server package lives at
+        # examples/codec_server/ in the wdunn001/diffusers fork and
+        # uses relative imports for app/settings/pipeline siblings).
         argv: list[str] = [
             "python3",
             "-m",

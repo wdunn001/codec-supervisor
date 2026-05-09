@@ -123,7 +123,8 @@ ENV CODEC_HOST=0.0.0.0 \
     CODEC_BACKEND_ARGS="" \
     CODEC_LATENT_DICTS_DIR=/opt/codec/dicts/latents \
     CODEC_LOG_LEVEL=INFO \
-    HF_HOME=/root/.cache/huggingface
+    HF_HOME=/root/.cache/huggingface \
+    PYTHONPATH=/opt/codec/diffusers/examples
 
 VOLUME ["/models"]
 EXPOSE 8080
