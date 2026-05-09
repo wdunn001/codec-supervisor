@@ -5,7 +5,23 @@ A backend-agnostic supervisor / control plane for inference servers. Wraps an Op
 - **Single port** — clients hit one HTTP endpoint and the supervisor proxies `/v1/*` to the live backend.
 - **Model registry** — list, pull from Hugging Face, tarball-upload, delete models on a `/models` volume.
 - **Hot swap** — `POST /admin/load` restarts the backend with a different model. No container restart.
-- **Easily deployable** — one Docker image bundles sglang + the [Codec PRs](#codec-patches) + the supervisor. `docker run` and you have a working Codec inference instance.
+- **Easily deployable** — one Docker image bundles the engine + the [Codec PRs](#codec-patches) + the supervisor. `docker run` and you have a working Codec inference instance.
+
+## Image catalog (released v0.3.0)
+
+This repo's [`release.yml` workflow](.github/workflows/release.yml) builds and pushes the following images on every `v*` git tag. Tags emitted per image: `:vX.Y.Z` (semver, immutable) · `:latest` (moves with each release) · `:sha-<git7>` (immutable git-tree pin for hotfixes).
+
+| Image                                                                          | Engine fork                                                                                       | Modality              |
+|--------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|-----------------------|
+| [`wdunn001/codec-sglang`](https://hub.docker.com/r/wdunn001/codec-sglang)      | sglang + Codec PRs #24483, #24557                                                                 | text-tokens           |
+| [`wdunn001/codec-vllm`](https://hub.docker.com/r/wdunn001/codec-vllm)          | vLLM + Codec PR #41765                                                                            | text-tokens           |
+| [`wdunn001/codec-llamacpp`](https://hub.docker.com/r/wdunn001/codec-llamacpp)  | llama.cpp + Codec PR #22757 (covers Ollama too)                                                   | text-tokens           |
+| [`wdunn001/codec-metamcp`](https://hub.docker.com/r/wdunn001/codec-metamcp)    | [`wdunn001/metamcp`](https://github.com/wdunn001/metamcp) `feat/codec-binary-transport`           | MCP gateway           |
+| [`wdunn001/codec-comfyui`](https://hub.docker.com/r/wdunn001/codec-comfyui)    | [`wdunn001/ComfyUI`](https://github.com/wdunn001/ComfyUI) `feat/codec-latent-transport`           | latents (v0.3)        |
+| [`wdunn001/codec-diffusers`](https://hub.docker.com/r/wdunn001/codec-diffusers) | [`wdunn001/diffusers`](https://github.com/wdunn001/diffusers) `feat/codec-latent-transport`       | latents (v0.3)        |
+| [`wdunn001/codec-time-leaf`](https://hub.docker.com/r/wdunn001/codec-time-leaf) | Reference Codec-aware MCP server ([`@codecai/codec-time-leaf`](https://www.npmjs.com/package/@codecai/codec-time-leaf)) | MCP tool (v0.3) |
+
+To cut a release: `git tag v0.3.x && git push origin v0.3.x`. The workflow runs `docker buildx` against each Dockerfile in parallel and pushes once green. Secrets required: `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN`.
 
 ## Why this exists
 
