@@ -40,11 +40,10 @@ ARG CODEC_COMMIT=
 
 # ---------- 0. base ----------
 FROM node:${NODE_VERSION}-bookworm-slim AS base
-
-ENV PNPM_HOME=/usr/local/share/pnpm
-ENV PATH="${PNPM_HOME}:${PATH}"
-
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Codec uses npm workspaces (package-lock.json at the repo root), not pnpm,
+# so the builder stages here mirror that. We deliberately don't enable
+# corepack/pnpm — using npm matches the lockfile and avoids the pnpm 10
+# "blocked build script" wall that dies on esbuild's postinstall.
 
 # ---------- 1. fetch ----------
 FROM base AS fetch
@@ -67,16 +66,16 @@ FROM base AS builder
 COPY --from=fetch /opt/codec /opt/codec
 WORKDIR /opt/codec
 
-# Install all workspace deps once (the time-server depends on @codecai/web
-# and @codecai/mcp-leaf, which are workspace siblings — building them in
-# place is faster than pulling published versions and removes any drift
-# between the published artifacts and the in-tree source the demo uses).
-RUN pnpm install --frozen-lockfile=false
+# Install workspace deps (npm workspaces honour the root package-lock.json).
+# Pull the time-server's deps + the two workspace siblings it imports
+# (@codecai/web, @codecai/mcp-leaf) into the same node_modules tree.
+RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
-# Build the workspace packages the time-server pulls from.
-RUN pnpm --filter @codecai/web build \
- && pnpm --filter @codecai/mcp-leaf build \
- && pnpm --filter @codecai/codec-time-leaf build
+# Build the workspace packages the time-server pulls from. tsc is a
+# devDependency of each; the workspace install pulled them in.
+RUN npm run build --workspace=@codecai/web \
+ && npm run build --workspace=@codecai/mcp-leaf \
+ && npm run build --workspace=@codecai/codec-time-leaf
 
 # Capture the fork SHA for the runtime LABEL.
 RUN cd /opt/codec && git rev-parse HEAD > /opt/CODEC_SHA
@@ -93,16 +92,17 @@ LABEL org.opencontainers.image.title="codec-time-leaf" \
 # Run as the non-root node user that the official base image already has.
 WORKDIR /opt/codec
 
-# Pull only the time-server package + its workspace dependencies. The
-# time-server's compiled output is at packages/mcp-leaf/examples/time-server/dist;
-# its mcp-leaf and web dependencies are resolved via the workspace's
-# node_modules symlinks, so we copy those too.
-COPY --from=builder --chown=node:node /opt/codec/node_modules                          /opt/codec/node_modules
-COPY --from=builder --chown=node:node /opt/codec/packages/web                          /opt/codec/packages/web
-COPY --from=builder --chown=node:node /opt/codec/packages/mcp-leaf                     /opt/codec/packages/mcp-leaf
-COPY --from=builder --chown=node:node /opt/CODEC_SHA                                    /opt/codec/CODEC_SHA
-COPY --from=builder --chown=node:node /opt/codec/package.json                           /opt/codec/package.json
-COPY --from=builder --chown=node:node /opt/codec/pnpm-workspace.yaml                    /opt/codec/pnpm-workspace.yaml
+# Pull only what the runtime needs: workspace tree + node_modules. The
+# time-server's compiled dist is at packages/mcp-leaf/examples/time-server/dist;
+# its workspace siblings (mcp-leaf, web) are resolved via npm's workspace
+# symlinks under node_modules/@codecai/*, so a recursive copy of node_modules
+# is enough.
+COPY --from=builder --chown=node:node /opt/codec/node_modules    /opt/codec/node_modules
+COPY --from=builder --chown=node:node /opt/codec/packages/web    /opt/codec/packages/web
+COPY --from=builder --chown=node:node /opt/codec/packages/mcp-leaf /opt/codec/packages/mcp-leaf
+COPY --from=builder --chown=node:node /opt/CODEC_SHA              /opt/codec/CODEC_SHA
+COPY --from=builder --chown=node:node /opt/codec/package.json     /opt/codec/package.json
+COPY --from=builder --chown=node:node /opt/codec/package-lock.json /opt/codec/package-lock.json
 
 USER node
 
