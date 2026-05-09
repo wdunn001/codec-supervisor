@@ -1,0 +1,132 @@
+# Release workflow — builds and pushes the Codec engine images to Docker Hub
+# on every git tag matching `v*`. Tags emitted per image:
+#
+#   wdunn001/codec-<name>:vX.Y.Z       (semver, immutable)
+#   wdunn001/codec-<name>:latest       (moves with each release)
+#   wdunn001/codec-<name>:sha-<git7>   (immutable, points at the source tree
+#                                        of the build — handy for hotfixes /
+#                                        rollbacks without re-tagging)
+#
+# Manual override: workflow_dispatch lets a maintainer rebuild the same
+# tag from a different ref (e.g. patching the Dockerfile without bumping
+# the version), or do a dry-run by leaving `push` unchecked.
+#
+# Secrets required (Settings → Secrets and variables → Actions):
+#   DOCKERHUB_USERNAME — `wdunn001`
+#   DOCKERHUB_TOKEN    — Docker Hub Personal Access Token with Read/Write/Delete
+#                         scope on the wdunn001/codec-* image set.
+#
+# CI minutes: each image is built in its own job in parallel. The four
+# images (comfyui, diffusers, metamcp, time-leaf) are independent — none
+# share base layers — so parallelism wins more than caching across jobs.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build from (default: triggering ref)'
+        required: false
+        type: string
+      push:
+        description: 'Push to Docker Hub (uncheck for dry-run build only)'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  meta:
+    name: Resolve image tags
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+      sha7:    ${{ steps.derive.outputs.sha7 }}
+      push:    ${{ steps.derive.outputs.push }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.ref || github.ref }}
+      - id: derive
+        name: Derive version + sha7
+        run: |
+          set -eu
+          # Version: tag name (without the leading `v`) on tag pushes, or
+          # `0.0.0-<short-sha>` for workflow_dispatch dry-runs.
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-$(git rev-parse --short=7 HEAD)"
+          fi
+          SHA7="$(git rev-parse --short=7 HEAD)"
+          # Default: push on tag, honour input on dispatch.
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            PUSH="${{ inputs.push }}"
+          else
+            PUSH="true"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha7=${SHA7}"       >> "$GITHUB_OUTPUT"
+          echo "push=${PUSH}"       >> "$GITHUB_OUTPUT"
+          echo "Resolved: version=${VERSION} sha7=${SHA7} push=${PUSH}"
+
+  build:
+    name: ${{ matrix.image }}
+    needs: meta
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: codec-comfyui
+            dockerfile: Dockerfile.comfyui
+          - image: codec-diffusers
+            dockerfile: Dockerfile.diffusers
+          - image: codec-metamcp
+            dockerfile: Dockerfile.metamcp
+          - image: codec-time-leaf
+            dockerfile: Dockerfile.time-leaf
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: needs.meta.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: ${{ needs.meta.outputs.push == 'true' }}
+          # Per-image build cache scoped by image name so the four jobs
+          # don't fight for one cache namespace.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to:   type=gha,mode=max,scope=${{ matrix.image }}
+          tags: |
+            wdunn001/${{ matrix.image }}:v${{ needs.meta.outputs.version }}
+            wdunn001/${{ matrix.image }}:latest
+            wdunn001/${{ matrix.image }}:sha-${{ needs.meta.outputs.sha7 }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.meta.outputs.version }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}

@@ -1,0 +1,112 @@
+# syntax=docker/dockerfile:1.7
+#
+# codec/time-leaf — reference Codec-aware MCP server in a container.
+#
+# This is the canonical Codec-aware MCP server: it exposes the standard
+# get_current_time + convert_time tools and wraps every CallToolResult
+# with `_codec_meta` blocks via @codecai/mcp-leaf. A Codec-aware gateway
+# (codec-metamcp) detects the pre-tokenized output and bypasses its
+# back-compat shim; non-Codec-aware clients in the same MCP namespace
+# see exactly what they always have.
+#
+# Three audiences:
+#   1. **MCP tool authors** — copy-paste this Dockerfile + the source at
+#      packages/mcp-leaf/examples/time-server/ for a working reference
+#      of the leaf-mode contract.
+#   2. **codec-metamcp operators** — drop this image into a metamcp
+#      compose to validate the [Codec][leaf] bypass path live.
+#   3. **bench operators** — this image is the workload behind variant
+#      5 (msgpack-both+gzip+map) of the MCP-live bench (see
+#      packages/bench/src/mcp-live.ts in the Codec repo). Validates the
+#      4.7× wire-bytes win on the MCP-shaped zstd dict.
+#
+# Stdio MCP server — there is NO inbound port. The container is launched
+# by an MCP host (codec-metamcp's `uv` / `npx` spawn path, or Claude
+# Desktop's `claude_desktop_config.json`). Stdin/stdout carry the
+# JSON-RPC stream.
+#
+# Codec map binding is read at startup from environment variables:
+#   CODEC_MAP_URL   — URL of the tokenizer map JSON (e.g. the qwen2 map)
+#   CODEC_MAP_HASH  — sha256:<hex> the map is content-addressed by
+# Both are required; without them the server falls through to plain text-
+# only responses (gateway shim handles those, and the [Codec][leaf]
+# log path stays silent).
+
+ARG NODE_VERSION=24
+
+ARG CODEC_REPO=https://github.com/wdunn001/Codec.git
+ARG CODEC_REF=main
+ARG CODEC_COMMIT=
+
+# ---------- 0. base ----------
+FROM node:${NODE_VERSION}-bookworm-slim AS base
+
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH="${PNPM_HOME}:${PATH}"
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# ---------- 1. fetch ----------
+FROM base AS fetch
+ARG CODEC_REPO
+ARG CODEC_REF
+ARG CODEC_COMMIT
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt
+RUN git clone --depth 1 --branch ${CODEC_REF} ${CODEC_REPO} codec
+RUN if [ -n "${CODEC_COMMIT}" ]; then \
+        cd codec && git fetch --depth 1 origin ${CODEC_COMMIT} && git checkout ${CODEC_COMMIT} ; \
+    fi
+
+# ---------- 2. builder ----------
+FROM base AS builder
+COPY --from=fetch /opt/codec /opt/codec
+WORKDIR /opt/codec
+
+# Install all workspace deps once (the time-server depends on @codecai/web
+# and @codecai/mcp-leaf, which are workspace siblings — building them in
+# place is faster than pulling published versions and removes any drift
+# between the published artifacts and the in-tree source the demo uses).
+RUN pnpm install --frozen-lockfile=false
+
+# Build the workspace packages the time-server pulls from.
+RUN pnpm --filter @codecai/web build \
+ && pnpm --filter @codecai/mcp-leaf build \
+ && pnpm --filter @codecai/codec-time-leaf build
+
+# Capture the fork SHA for the runtime LABEL.
+RUN cd /opt/codec && git rev-parse HEAD > /opt/CODEC_SHA
+
+# ---------- 3. runtime ----------
+FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+
+LABEL org.opencontainers.image.title="codec-time-leaf" \
+      org.opencontainers.image.description="Reference Codec-aware MCP server (time tools) — wraps tool results with _codec_meta for the leaf-mode bypass." \
+      org.opencontainers.image.source="https://github.com/wdunn001/Codec" \
+      org.opencontainers.image.vendor="wdunn001" \
+      org.opencontainers.image.licenses="MIT"
+
+# Run as the non-root node user that the official base image already has.
+WORKDIR /opt/codec
+
+# Pull only the time-server package + its workspace dependencies. The
+# time-server's compiled output is at packages/mcp-leaf/examples/time-server/dist;
+# its mcp-leaf and web dependencies are resolved via the workspace's
+# node_modules symlinks, so we copy those too.
+COPY --from=builder --chown=node:node /opt/codec/node_modules                          /opt/codec/node_modules
+COPY --from=builder --chown=node:node /opt/codec/packages/web                          /opt/codec/packages/web
+COPY --from=builder --chown=node:node /opt/codec/packages/mcp-leaf                     /opt/codec/packages/mcp-leaf
+COPY --from=builder --chown=node:node /opt/CODEC_SHA                                    /opt/codec/CODEC_SHA
+COPY --from=builder --chown=node:node /opt/codec/package.json                           /opt/codec/package.json
+COPY --from=builder --chown=node:node /opt/codec/pnpm-workspace.yaml                    /opt/codec/pnpm-workspace.yaml
+
+USER node
+
+# Stdio MCP servers communicate over stdin/stdout — no port to expose.
+# The MCP host (Claude Desktop, codec-metamcp, etc.) launches the entry
+# point and pipes JSON-RPC frames over the stdio channel.
+ENTRYPOINT ["node", "/opt/codec/packages/mcp-leaf/examples/time-server/dist/index.js"]
