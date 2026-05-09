@@ -74,8 +74,12 @@ RUN git clone --depth 50 --branch "${CODEC_DIFFUSERS_REF}" "${CODEC_DIFFUSERS_RE
  && git log -1 --pretty='%h %s' > /opt/codec/CODEC_DIFFUSERS_HEAD
 
 # ---------- 2. python deps ----------
+# `pip install --upgrade pip` would die with "Cannot uninstall pip 24.0,
+# RECORD file not found" because the CUDA base image's pip was installed
+# by debian's apt (no wheel RECORD). `--ignore-installed pip` lets us
+# layer the newer pip on top instead of trying to uninstall the dpkg one.
 RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
-    pip install --break-system-packages --upgrade pip \
+    pip install --break-system-packages --ignore-installed --upgrade pip \
  && pip install --break-system-packages \
         --index-url https://download.pytorch.org/whl/cu124 \
         torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION} \
