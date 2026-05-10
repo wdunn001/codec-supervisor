@@ -11,6 +11,7 @@ Routes:
   POST   /admin/stop                            — stop the backend (supervisor stays up)
 
   GET    /admin/policies                        — list safety policies
+  GET    /admin/policies/_classifiers           — list registered classifiers
   GET    /admin/policies/{id}                   — read internal policy config
   PUT    /admin/policies/{id}                   — write internal policy config + snapshot
   DELETE /admin/policies/{id}                   — drop internal policy config
@@ -45,6 +46,7 @@ from .models import (
 )
 from .admin_safety import create_safety_router
 from .proxy import proxy_request
+from .safety_classifiers import register_default_classifiers
 from .schemas import (
     LoadRequest,
     ModelsListResponse,
@@ -56,6 +58,11 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(config: Config) -> FastAPI:
+    # Register the shipped safety classifiers at app construction. Idempotent
+    # so test fixtures that build the app repeatedly don't error on the
+    # second instantiation.
+    register_default_classifiers()
+
     backend = get_backend(config.backend)
     manager = ProcessManager(
         backend=backend,

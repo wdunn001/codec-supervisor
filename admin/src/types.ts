@@ -82,3 +82,12 @@ export interface SanitizeResponse {
   descriptor: PublishedDescriptor;
   hash: string;
 }
+
+/** Public-shape view of a registered server-side classifier. */
+export interface ClassifierEntry {
+  model_id: string;
+  tier: number;
+  description?: string | null;
+  requires: string;
+  categories: string[];
+}

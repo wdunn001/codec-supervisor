@@ -8,15 +8,15 @@ import {
   sanitizePolicy,
 } from "./api";
 import { CategoriesTab } from "./CategoriesTab";
+import { ClassifierPickerTab } from "./ClassifierPickerTab";
 import { EditorTab } from "./EditorTab";
 import type { InternalPolicy, SanitizeResponse } from "./types";
 
 /**
- * Admin shell. Slice 5 ships TWO tabs (Editor + Categories) for each
- * selected policy; later slices add Classifier picker, Test bench,
- * Versions, and the .well-known generator.
+ * Admin shell. Slices 5+7 ship three tabs (Editor + Categories + Classifier);
+ * later slices add Test bench, Versions, and the .well-known generator.
  */
-type Tab = "editor" | "categories";
+type Tab = "editor" | "categories" | "classifier";
 
 const EMPTY_POLICY: InternalPolicy = {
   id: "",
@@ -182,6 +182,12 @@ export function App(): JSX.Element {
               >
                 Categories
               </button>
+              <button
+                className={tab === "classifier" ? "active" : ""}
+                onClick={() => setTab("classifier")}
+              >
+                Classifier
+              </button>
             </div>
 
             <div className="toolbar">
@@ -200,8 +206,10 @@ export function App(): JSX.Element {
 
             {tab === "editor" ? (
               <EditorTab draft={draft} setDraft={setDraft} />
-            ) : (
+            ) : tab === "categories" ? (
               <CategoriesTab draft={draft} setDraft={setDraft} />
+            ) : (
+              <ClassifierPickerTab draft={draft} setDraft={setDraft} />
             )}
 
             {summary}

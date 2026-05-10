@@ -46,6 +46,7 @@ from .safety import (
     sanitize,
     save_policy,
 )
+from .safety_classifier import list_registered as list_registered_classifiers
 
 
 class _PoliciesListResponse(BaseModel):
@@ -65,6 +66,23 @@ class _DeleteResponse(BaseModel):
     deleted: str
 
 
+class _ClassifierEntry(BaseModel):
+    """Public-shape view of a `RegistryEntry` for the admin picker.
+
+    Doesn't expose the factory callable — that's for runtime use only.
+    """
+
+    model_id: str
+    tier: int
+    description: str | None = None
+    requires: str
+    categories: list[str]
+
+
+class _ClassifiersListResponse(BaseModel):
+    classifiers: list[_ClassifierEntry]
+
+
 def create_safety_router(policies_dir: Path) -> APIRouter:
     """Build the `/admin/policies/*` router rooted at `policies_dir`.
 
@@ -78,6 +96,27 @@ def create_safety_router(policies_dir: Path) -> APIRouter:
     @router.get("", response_model=_PoliciesListResponse)
     async def get_policies():
         return _PoliciesListResponse(policies=list_policies(policies_dir))
+
+    @router.get("/_classifiers", response_model=_ClassifiersListResponse)
+    async def get_classifiers():
+        """List classifiers registered with the supervisor.
+
+        The admin app's ClassifierPicker tab renders this — operators
+        bind a policy to one of these via the policy's
+        `classifier.family` field.
+        """
+        return _ClassifiersListResponse(
+            classifiers=[
+                _ClassifierEntry(
+                    model_id=e.model_id,
+                    tier=e.tier,
+                    description=e.description,
+                    requires=e.advertised_requires,
+                    categories=list(e.advertised_categories),
+                )
+                for e in list_registered_classifiers()
+            ],
+        )
 
     @router.get("/_versions", response_model=_VersionsListResponse)
     async def get_versions():

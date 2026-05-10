@@ -5,7 +5,12 @@
  * `/admin/policies/`); cross-origin during `npm run dev` via the Vite proxy
  * configured in `vite.config.ts`.
  */
-import type { InternalPolicy, PublishedDescriptor, SanitizeResponse } from "./types";
+import type {
+  ClassifierEntry,
+  InternalPolicy,
+  PublishedDescriptor,
+  SanitizeResponse,
+} from "./types";
 
 const BASE = "/admin/policies";
 
@@ -65,6 +70,11 @@ export async function sanitizePolicy(id: string): Promise<SanitizeResponse> {
 export async function listVersions(): Promise<string[]> {
   const r = await request<{ versions: string[] }>(`${BASE}/_versions`);
   return r.versions;
+}
+
+export async function listClassifiers(): Promise<ClassifierEntry[]> {
+  const r = await request<{ classifiers: ClassifierEntry[] }>(`${BASE}/_classifiers`);
+  return r.classifiers;
 }
 
 export async function getVersion(hexHash: string): Promise<PublishedDescriptor> {
