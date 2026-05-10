@@ -13,9 +13,9 @@ This repo's [`release.yml` workflow](.github/workflows/release.yml) builds and p
 
 | Image                                                                          | Current tag | Engine fork                                                                                       | Modality              |
 |--------------------------------------------------------------------------------|:-----------:|---------------------------------------------------------------------------------------------------|-----------------------|
-| [`wdunn001/codec-sglang`](https://hub.docker.com/r/wdunn001/codec-sglang)      | latest      | sglang + Codec PRs #24483, #24557                                                                 | text-tokens           |
-| [`wdunn001/codec-vllm`](https://hub.docker.com/r/wdunn001/codec-vllm)          | latest      | vLLM + Codec PR #41765                                                                            | text-tokens           |
-| [`wdunn001/codec-llamacpp`](https://hub.docker.com/r/wdunn001/codec-llamacpp)  | latest      | llama.cpp + Codec PR #22757 (covers Ollama too)                                                   | text-tokens           |
+| [`wdunn001/codec-sglang`](https://hub.docker.com/r/wdunn001/codec-sglang)      | latest      | sglang + Codec patches (token-native binary transport + server-side ToolWatcher)                  | text-tokens           |
+| [`wdunn001/codec-vllm`](https://hub.docker.com/r/wdunn001/codec-vllm)          | latest      | vLLM + Codec patches (token-native binary transport on `/v1/completions` and `/v1/chat/completions`) | text-tokens           |
+| [`wdunn001/codec-llamacpp`](https://hub.docker.com/r/wdunn001/codec-llamacpp)  | latest      | llama.cpp + Codec patches on `llama-server` (covers Ollama too)                                   | text-tokens           |
 | [`wdunn001/codec-metamcp`](https://hub.docker.com/r/wdunn001/codec-metamcp)    | **v0.3.2**  | [`wdunn001/metamcp`](https://github.com/wdunn001/metamcp) `feat/codec-binary-transport`           | MCP gateway (with leaf-mode bypass) |
 | [`wdunn001/codec-time-leaf`](https://hub.docker.com/r/wdunn001/codec-time-leaf) | **v0.3.2**  | Reference Codec-aware MCP server ([`@codecai/codec-time-leaf`](https://www.npmjs.com/package/@codecai/codec-time-leaf)) | MCP tool (v0.3) |
 | [`wdunn001/codec-comfyui`](https://hub.docker.com/r/wdunn001/codec-comfyui)    | **v0.3.1**  | [`wdunn001/ComfyUI`](https://github.com/wdunn001/ComfyUI) `feat/codec-latent-transport`           | latents (v0.3)        |
