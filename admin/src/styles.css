@@ -1,0 +1,207 @@
+/* codec-supervisor admin — minimal terminal-ish styling.
+   Operator UI; intentionally not glamorous. Matches @codecai/web's
+   demo-web feel: monospace, dark, dense tables. */
+:root {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --fg: #c9d1d9;
+  --muted: #8b949e;
+  --accent: #f0c674;
+  --danger: #f85149;
+  --ok: #56d364;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+input, select, textarea {
+  width: 100%;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  height: 100%;
+}
+
+.sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.sidebar h1 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin: 0 0 12px;
+}
+
+.sidebar ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.sidebar li button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 4px 8px;
+  margin-bottom: 2px;
+}
+
+.sidebar li button.active {
+  background: var(--bg);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+.sidebar .new-policy {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.workspace {
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.tabs button {
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 0;
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.tabs button.active {
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--panel);
+  position: relative;
+  top: 1px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+  align-items: start;
+}
+
+.field-row label {
+  color: var(--muted);
+}
+
+.cat-row {
+  display: grid;
+  grid-template-columns: 1fr 120px 2fr 30px;
+  gap: 8px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+
+.cat-row .delete {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.toolbar .save {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.summary {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.summary code {
+  color: var(--accent);
+}
+
+.pre-snippet {
+  background: #010409;
+  color: var(--fg);
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  white-space: pre;
+  font-size: 12px;
+}
+
+.error {
+  color: var(--danger);
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--danger);
+  padding: 6px 10px;
+  margin: 8px 0;
+}
+
+.muted {
+  color: var(--muted);
+}
