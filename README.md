@@ -7,6 +7,17 @@ A backend-agnostic supervisor / control plane for inference servers. Wraps an Op
 - **Hot swap** — `POST /admin/load` restarts the backend with a different model. No container restart.
 - **Easily deployable** — one Docker image bundles the engine + the [Codec PRs](#codec-patches) + the supervisor. `docker run` and you have a working Codec inference instance.
 
+> **v0.4 in flight** — adds operator-side safety-policy authoring,
+> logits-space enforcement, a pluggable classifier registry (Llama
+> Guard 3 1B / ShieldGemma 2B / embedding-space), and an admin
+> React app under `/admin/policies/`. Sanitized policy descriptors
+> are published at `.well-known/codec/policies/<id>.json` so clients
+> can verify the *shape* of enforcement without operator-internal
+> banned-id lists ever crossing the wire. See
+> [Safety enforcement (v0.4 — work in progress)](#safety-enforcement-v04--work-in-progress)
+> below. The v0.4 cut is gated on the
+> [Codec release checklist](https://github.com/wdunn001/Codec/blob/main/docs/RELEASE_CHECKLIST.md).
+
 ## Image catalog (current v0.3.x)
 
 This repo's [`release.yml` workflow](.github/workflows/release.yml) builds and pushes the following images on every `v*` git tag. Tags emitted per image: `:vX.Y.Z` (semver, immutable) · `:latest` (moves with each release) · `:sha-<git7>` (immutable git-tree pin for hotfixes).
@@ -139,6 +150,10 @@ Pass `CODEC_BACKEND_ARGS` to tune sglang per-model (`--tp 2 --quantization fp8 -
 | `DELETE` | `/admin/models/{name}` | — | Refuses if the model is currently loaded |
 | `POST` | `/admin/load`            | `{"name": "qwen2.5-7b"}` or `{"name": "Qwen/Qwen2.5-7B-Instruct", "allow_remote": true}` | Restart backend with this model |
 | `POST` | `/admin/stop`            | — | Stop backend; supervisor stays up |
+| `GET`  | `/admin/policies`        | — | List safety policies on disk (id, version, hash, summary) — **v0.4, in flight** |
+| `POST` | `/admin/policies`        | internal-policy JSON | Save a new policy revision (re-sanitize + re-hash) — **v0.4, in flight** |
+| `GET`  | `/admin/policies/{id}`   | — | Internal policy with full banned-id list / classifier thresholds (operator-only) — **v0.4** |
+| `GET`  | `/admin/policies/{id}/descriptor` | — | The sanitized publishable descriptor — same bytes served at `.well-known/codec/policies/<id>.json` — **v0.4** |
 | `*`    | `/{anything}`            | (proxied) | Forwarded to the backend (incl. SSE/msgpack streams) |
 
 ### Examples
@@ -227,6 +242,93 @@ docker compose --profile diffusers up -d codec-diffusers
 ```
 
 The text-engine forks (`vllm`, `sglang`, `llama.cpp`) remain upstream-PR-track; only the latent forks are explicitly fork-only.
+
+### Safety enforcement (v0.4 — work in progress)
+
+The supervisor implements the operator side of the Codec
+[safety-policy negotiation](https://github.com/wdunn001/Codec/blob/main/spec/versions/v0.4.md#safety-policy-negotiation):
+authors **internal** policy configs and publishes **sanitized**
+descriptors; the descriptor is what clients fetch and pin. v0.4 is
+in flight pending the release-checklist gates (validation, benches,
+docs, READMEs, website) — see
+[Codec/docs/RELEASE_CHECKLIST.md](https://github.com/wdunn001/Codec/blob/main/docs/RELEASE_CHECKLIST.md).
+
+What ships:
+
+- **Layered architecture** mirroring the spec — prefilter (client),
+  logits processor (server, token-space), streaming classifier
+  (server, embedding/text), and a per-category action policy
+  (`stop` / `redact` / `regenerate` / `flag`).
+- **Internal-vs-published split** (`codec_supervisor/safety.py`).
+  Internal Pydantic model carries banned-token-ID lists, regex
+  patterns, multi-token patterns, classifier thresholds; the
+  `sanitize()` step strips all of those and emits only categories,
+  action types, classifier family, and rules-summary counts. Operator
+  configs never cross the wire.
+- **Logits-space enforcement** (`codec_supervisor/safety_logits.py`)
+  — banned-token-ID masking compatible with the vLLM
+  `LogitsProcessor` interface; pure token-space.
+- **Multi-token banned-pattern matcher**
+  (`codec_supervisor/safety_token_matcher.py` +
+  `safety_aho_corasick.py`) — Aho-Corasick automaton over int
+  alphabets so multi-token banned strings (slurs, secret-shaped
+  patterns) match during generation without per-step regex.
+- **Delay-k streaming decisioning**
+  (`codec_supervisor/safety_streaming.py`) following the Streaming
+  Content Monitor (arxiv 2506.09996) pattern — tolerate k
+  uncertain frames before forcing the classifier's hand.
+- **Pluggable classifier registry**
+  (`codec_supervisor/safety_classifier.py` +
+  `codec_supervisor/safety_classifiers/`) with three v1
+  implementations: **Llama Guard 3 1B** (14-category taxonomy),
+  **ShieldGemma 2B** (4-category), **embedding-space**
+  (engine-hidden-state, no detok). Generator-DI on every
+  classifier — constructors accept an injectable callable so tests
+  run without weights.
+- **Adversarial defenses**
+  (`codec_supervisor/safety_adversarial.py`) — TokenBreak,
+  EchoGram, and glitch-token (undertrained-slot) detection helpers
+  that complement banned-id-list enforcement.
+- **Admin REST surface** (`codec_supervisor/admin_safety.py`) —
+  mounted at `/admin/policies/*`; see the admin-API table above.
+- **Admin React app** (`admin/`, Vite) for policy authoring,
+  classifier configuration, and live test-bench. Mounted at
+  `/admin/policies/`.
+- **Optional training pipeline**
+  (`codec_supervisor/training/bootstrap_corpus.py`) — distill
+  text-space classifier judgments into the embedding-space
+  classifier without exposing labels back to the wire.
+
+What hosts and clients see in v0.4:
+
+- Server adds `safety_policy_id` + `safety_policy_hash` to its
+  `READY` frame and publishes `.well-known/codec/policies/<id>.json`
+  (plus the content-addressed `sha256/<hex>.json` sibling) from the
+  sanitized descriptor.
+- Clients verify the hash, learn the *shape* of enforcement
+  (categories + actions + classifier family), and never see the
+  operator's internal banned-id lists or thresholds — that's the
+  disclosure-boundary contract.
+- Streaming completions emit `finish_reason: "policy_violation"`
+  when an action of `stop` fires; `redact` / `regenerate` are
+  invisible on the wire by design.
+
+**Optional install extras** (Python):
+
+```bash
+pip install -e '.[safety]'              # base safety stack (logits, matcher, streaming)
+pip install -e '.[safety-llamaguard]'   # + Llama Guard 3 1B classifier
+pip install -e '.[safety-shieldgemma]'  # + ShieldGemma 2B classifier
+pip install -e '.[safety-embedding]'    # + engine-hidden-state classifier
+```
+
+Treat all of the above as work-in-progress until v0.4 cuts. The
+matching client-side package is
+[`@codecai/web-safety`](https://github.com/wdunn001/Codec/tree/main/packages/web-safety)
+(prefilter + browser classifier registry). The CLI surface for
+authoring, sanitizing, and publishing descriptors lives in
+[`@codecai/maps-cli`](https://www.npmjs.com/package/@codecai/maps-cli)
+under the `policies-*` subcommands.
 
 ## Adding a new backend
 

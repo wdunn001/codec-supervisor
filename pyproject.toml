@@ -34,6 +34,15 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
 ]
+# Real model loading for safety classifiers (Llama Guard 3 1B, ShieldGemma 2B).
+# The classifier classes in `codec_supervisor.safety_classifiers` run fine
+# without these via the generator-DI hooks — used in tests + when an operator
+# runs the model out-of-process. Install this extra to use the default
+# in-process loaders.
+classifiers = [
+    "transformers>=4.40",
+    "torch>=2.0",
+]
 
 [project.scripts]
 codec-supervisor = "codec_supervisor.cli:main"

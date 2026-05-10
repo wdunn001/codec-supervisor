@@ -1,15 +1,24 @@
 """FastAPI app: admin endpoints + reverse-proxy catch-all.
 
 Routes:
-  GET    /health              — supervisor liveness
-  GET    /admin/status        — backend state, current model, uptime
-  GET    /admin/models        — list models in /models
-  POST   /admin/models/pull   — snapshot_download from HF into /models
-  POST   /admin/models/upload — multipart tarball upload into /models/{name}
-  DELETE /admin/models/{name} — remove from /models
-  POST   /admin/load          — restart backend with the named model
-  POST   /admin/stop          — stop the backend (supervisor stays up)
-  *      /{path:path}         — proxy everything else to the backend
+  GET    /health                                — supervisor liveness
+  GET    /admin/status                          — backend state, current model, uptime
+  GET    /admin/models                          — list models in /models
+  POST   /admin/models/pull                     — snapshot_download from HF into /models
+  POST   /admin/models/upload                   — multipart tarball upload into /models/{name}
+  DELETE /admin/models/{name}                   — remove from /models
+  POST   /admin/load                            — restart backend with the named model
+  POST   /admin/stop                            — stop the backend (supervisor stays up)
+
+  GET    /admin/policies                        — list safety policies
+  GET    /admin/policies/_classifiers           — list registered classifiers
+  GET    /admin/policies/{id}                   — read internal policy config
+  PUT    /admin/policies/{id}                   — write internal policy config + snapshot
+  DELETE /admin/policies/{id}                   — drop internal policy config
+  POST   /admin/policies/{id}/sanitize          — emit publishable descriptor + hash
+  GET    /admin/policies/_versions              — list archived descriptor hashes
+  GET    /admin/policies/_versions/{hex}        — read an archived descriptor
+  *      /{path:path}                           — proxy everything else to the backend
 
 The catch-all is registered last so admin routes win.
 """
@@ -35,7 +44,9 @@ from .models import (
     model_path,
     pull_from_hf,
 )
+from .admin_safety import create_safety_router
 from .proxy import proxy_request
+from .safety_classifiers import register_default_classifiers
 from .schemas import (
     LoadRequest,
     ModelsListResponse,
@@ -47,6 +58,11 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(config: Config) -> FastAPI:
+    # Register the shipped safety classifiers at app construction. Idempotent
+    # so test fixtures that build the app repeatedly don't error on the
+    # second instantiation.
+    register_default_classifiers()
+
     backend = get_backend(config.backend)
     manager = ProcessManager(
         backend=backend,
@@ -59,6 +75,7 @@ def create_app(config: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         config.models_dir.mkdir(parents=True, exist_ok=True)
+        config.policies_dir.mkdir(parents=True, exist_ok=True)
         if config.initial_model:
             target = _resolve_local_or_passthrough(
                 config.initial_model, config.models_dir
@@ -172,6 +189,9 @@ def create_app(config: Config) -> FastAPI:
     async def stop():
         await manager.stop()
         return {"stopped": True}
+
+    # ---------- safety policy admin ----------
+    app.include_router(create_safety_router(config.policies_dir))
 
     # ---------- catch-all proxy (must be last) ----------
     @app.api_route(
