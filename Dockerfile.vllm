@@ -21,7 +21,9 @@ ARG VLLM_BASE=vllm/vllm-openai:nightly
 FROM ${VLLM_BASE}
 
 ARG CODEC_VLLM_REPO=https://github.com/wdunn001/vllm.git
-ARG CODEC_VLLM_REF=feat/codec-binary-transport
+# Codec patches now live on the fork's main branch — the feature-branch /
+# PR-against-upstream distinction is retired; we maintain in-fork-main only.
+ARG CODEC_VLLM_REF=main
 ARG CODEC_VLLM_COMMIT=
 
 LABEL org.opencontainers.image.title="codec-vllm" \

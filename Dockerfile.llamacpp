@@ -22,10 +22,10 @@ ARG BASE_CUDA_DEV=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
 ARG BASE_CUDA_RUN=nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
 
 ARG CODEC_LLAMACPP_REPO=https://github.com/wdunn001/llama.cpp.git
-# Default to the stacked branch (binary transport + ToolWatcher + gzip).
-# Override with --build-arg CODEC_LLAMACPP_REF=feat/codec-binary-transport
-# for just the open PR's contents.
-ARG CODEC_LLAMACPP_REF=feat/codec-compression
+# All Codec patches (binary transport + ToolWatcher + streaming gzip)
+# are now merged into the fork's master branch — the feature-branch /
+# PR-against-upstream distinction is retired; we maintain in-fork-master only.
+ARG CODEC_LLAMACPP_REF=master
 ARG CODEC_LLAMACPP_COMMIT=
 
 # Build for all common CUDA arches by default; override via --build-arg.
