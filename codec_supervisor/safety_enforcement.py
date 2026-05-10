@@ -29,6 +29,10 @@ from typing import Callable, Sequence
 
 from .safety import InternalPolicy, load_policy
 from .safety_logits import BannedTokenLogitsProcessor
+from .safety_token_matcher import (
+    TokenPatternMatcher,
+    build_token_pattern_matcher,
+)
 
 LogitsProcessor = Callable[[Sequence[int], object], object]
 
@@ -86,8 +90,41 @@ class SafetyEnforcement:
         """Build the per-request logits processor.
 
         Slice 6 returns a single `BannedTokenLogitsProcessor`. Future
-        slices (Aho-Corasick token-trie, embedding-space scorer) extend
-        this to compose multiple processors via
-        `safety_logits.compose(...)`.
+        slices (embedding-space scorer) extend this to compose multiple
+        processors via `safety_logits.compose(...)`.
+
+        Note: the multi-token Aho-Corasick matcher (slice 9) is NOT a
+        logits processor — it's a streaming detector that fires AFTER
+        a token has been generated. Use `make_token_matcher()` to get
+        the streaming matcher and `make_logits_processor()` for the
+        single-token banned-id mask. Both run per-request; they're
+        complementary.
         """
         return BannedTokenLogitsProcessor(self.banned_token_ids)
+
+    def make_token_matcher(self, tokenizer_id: str) -> TokenPatternMatcher:
+        """Build the multi-token Aho-Corasick matcher for `tokenizer_id`.
+
+        Patterns are taken from the policy's `multi_token_patterns`
+        field; only those with pre-enumerated tokenizations under the
+        engine's loaded `tokenizer_id` apply (the rest silently skip,
+        which is the right behavior for cross-tokenizer policies that
+        publish per-vocab tokenizations).
+
+        Returns a matcher whose `pattern_count == 0` if no patterns
+        apply — feeding into an empty matcher is a constant-time
+        no-op so this is safe to wire unconditionally.
+
+        The caller obtains a per-stream `TokenPatternStream` via
+        `matcher.stream()` and feeds engine-emitted token IDs to its
+        `feed(tid)` method. Matches return `PatternMatch(label, action,
+        end_position, pattern_length, literal)`. The `action` follows
+        the policy schema's convention (`stop` / `redact` /
+        `regenerate` / `flag`); the proxy / engine integration
+        implements the placeholder / resample loop for non-`flag`
+        actions.
+        """
+        return build_token_pattern_matcher(
+            list(self.multi_token_patterns),
+            tokenizer_id,
+        )
