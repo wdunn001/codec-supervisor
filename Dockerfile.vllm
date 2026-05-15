@@ -67,6 +67,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
         vllm/entrypoints/codec_agent.py \
         vllm/entrypoints/codec_compression.py \
         vllm/entrypoints/codec_frame.py \
+        vllm/entrypoints/codec_version.py \
         vllm/entrypoints/openai/chat_completion/api_router.py \
         vllm/entrypoints/openai/chat_completion/protocol.py \
         vllm/entrypoints/openai/chat_completion/serving.py \
