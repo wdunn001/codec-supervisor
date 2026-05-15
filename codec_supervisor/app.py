@@ -18,6 +18,8 @@ Routes:
   POST   /admin/policies/{id}/sanitize          — emit publishable descriptor + hash
   GET    /admin/policies/_versions              — list archived descriptor hashes
   GET    /admin/policies/_versions/{hex}        — read an archived descriptor
+
+  GET    /admin/codec-policy                    — v0.4 capability state (enable + enforce stages)
   *      /{path:path}                           — proxy everything else to the backend
 
 The catch-all is registered last so admin routes win.
@@ -192,6 +194,24 @@ def create_app(config: Config) -> FastAPI:
 
     # ---------- safety policy admin ----------
     app.include_router(create_safety_router(config.policies_dir))
+
+    # ---------- codec v0.4 capability state ----------
+    @app.get("/admin/codec-policy")
+    async def codec_policy():
+        """Read-only snapshot of the deployment's v0.4 capability state.
+
+        Reads the same env vars the backend (sglang) reads in
+        `codec_version.py`. Default-off ship state returns every
+        capability with enabled=False, enforced=False — the wire is
+        exactly v0.3 in that case.
+
+        The matching `.well-known/codec/version-policy.json` (proxied
+        through to the backend) is the public discovery surface;
+        this endpoint is the operator-facing view.
+        """
+        from .codec_policy import snapshot
+
+        return snapshot()
 
     # ---------- catch-all proxy (must be last) ----------
     @app.api_route(
