@@ -17,6 +17,14 @@ A backend-agnostic supervisor / control plane for inference servers. Wraps an Op
 > [Safety enforcement (v0.4 — work in progress)](#safety-enforcement-v04--work-in-progress)
 > below. The v0.4 cut is gated on the
 > [Codec release checklist](https://github.com/wdunn001/Codec/blob/main/docs/RELEASE_CHECKLIST.md).
+>
+> Every v0.4 capability is **opt-on, two-stage** (per the
+> [spec](https://github.com/wdunn001/Codec/blob/main/spec/versions/v0.4.md#capabilities-are-opt-on-at-the-server-two-stage)):
+> default OFF. Per-capability env vars enable; `*_REQUIRED=1` flips
+> on enforcement. A supervisor with no v0.4 capabilities enabled
+> serves byte-equivalent v0.3 wire — no v0.4 negotiation headers,
+> no 426 for version reasons. Operators turn this on deliberately
+> for public / multi-tenant / mandatory-policy deployments.
 
 ## Image catalog (current v0.3.x)
 
