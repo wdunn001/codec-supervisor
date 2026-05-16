@@ -39,8 +39,15 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
  && git log -1 --pretty='%h %s' > /opt/codec/CODEC_SGLANG_HEAD \
  && cd python \
  && pip install --no-deps -e . \
- && pip install msgpack brotli zstandard \
- && pip install --upgrade "sglang-kernel>=0.4.2.post1"
+ && pip install msgpack brotli zstandard
+# Note: the upstream sglang pyproject pins sglang-kernel>=0.4.2.post2, but the
+# stock lmsysorg/sglang:latest base image ships 0.4.2. The runtime
+# SGLANG_SKIP_SGL_KERNEL_VERSION_CHECK=1 env var (set by codec-supervisor at
+# launch) bypasses the assertion, so we deliberately do NOT pip-upgrade
+# sgl-kernel during build — the upgrade pulls a 322 MB CUDA wheel that
+# crawls through the lab's WAN. Restore the upgrade line when (a) the base
+# image bumps sgl-kernel to match upstream's pin, or (b) a feature we ship
+# requires the post2 kernel.
 
 # ---------- 1b. fetch reference Codec zstd dicts so dict-zstd works out of the box ----------
 # Per spec/PROTOCOL.md "Pre-trained ZSTD dictionaries", a server MUST load

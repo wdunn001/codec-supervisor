@@ -41,15 +41,15 @@ ARG CUDA_DOCKER_ARCH
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        gcc-14 g++-14 build-essential cmake git \
+        gcc-14 g++-14 build-essential cmake git pkg-config \
         libssl-dev libgomp1 libcurl4-openssl-dev ca-certificates \
-        zlib1g-dev \
+        zlib1g-dev libbrotli-dev libzstd-dev \
  && rm -rf /var/lib/apt/lists/*
-# zlib1g-dev is the build-time dep for the streaming gzip middleware
-# (LLAMA_CODEC_GZIP path in tools/server/CMakeLists.txt). Without it,
-# find_package(ZLIB) silently fails under LLAMA_CODEC_GZIP=AUTO and the
-# binary ships without compression — which then defeats the point of
-# Codec on small frames.
+# zlib1g-dev, libbrotli-dev, libzstd-dev are build-time deps for the
+# three streaming compression middlewares (LLAMA_CODEC_GZIP / _BROTLI /
+# _ZSTD paths in tools/server/CMakeLists.txt). Without them, the AUTO
+# probes silently fall through and the binary ships without those
+# encodings — sglang/vllm cover all three; llama.cpp matches as of v0.4.1.
 
 ENV CC=gcc-14 CXX=g++-14 CUDAHOSTCXX=g++-14
 
@@ -76,6 +76,8 @@ RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
         -DLLAMA_CURL=ON \
         -DLLAMA_CODEC=AUTO \
         -DLLAMA_CODEC_GZIP=ON \
+        -DLLAMA_CODEC_BROTLI=ON \
+        -DLLAMA_CODEC_ZSTD=ON \
         ${CMAKE_ARGS} . \
  && cmake --build build --config Release -j$(nproc) --target llama-server
 

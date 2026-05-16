@@ -59,6 +59,36 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 
+def _warn_missing_compression_modules() -> None:
+    """Per v0.4 §Transport-Compression, ``gzip`` and ``br`` are server-SHOULD
+    and ``zstd`` is server-MAY. Both ``brotli`` and ``zstandard`` are pip-installed
+    by the Dockerfile; if they're missing at runtime the image was built from a
+    stale tree (the v0.4.1 post-mortem class of regression). The codec_compression
+    negotiator silently falls back to identity when its modules are missing —
+    catch this loudly at startup instead.
+    """
+    missing: list[str] = []
+    try:
+        import brotli  # noqa: F401
+    except ImportError:
+        missing.append("brotli")
+    try:
+        import zstandard  # noqa: F401
+    except ImportError:
+        missing.append("zstandard")
+    if missing:
+        logger.warning(
+            "codec-supervisor: missing compression module(s) %s — the codec_compression "
+            "negotiator will silently fall back to gzip/identity on requests asking for "
+            "the missing encodings, which is a spec SHOULD violation for `br` and "
+            "operationally misleading for `zstd` (the deployment may have shipped "
+            "Codec-Zstd-Dict in advertised maps but cannot honor zstd at request time). "
+            "Rebuild the image from current codec-supervisor/Dockerfile HEAD "
+            "(pip install msgpack brotli zstandard).",
+            missing,
+        )
+
+
 def create_app(config: Config) -> FastAPI:
     # Register the shipped safety classifiers at app construction. Idempotent
     # so test fixtures that build the app repeatedly don't error on the
@@ -78,6 +108,7 @@ def create_app(config: Config) -> FastAPI:
     async def lifespan(_: FastAPI):
         config.models_dir.mkdir(parents=True, exist_ok=True)
         config.policies_dir.mkdir(parents=True, exist_ok=True)
+        _warn_missing_compression_modules()
         if config.initial_model:
             target = _resolve_local_or_passthrough(
                 config.initial_model, config.models_dir
