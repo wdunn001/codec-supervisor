@@ -17,7 +17,7 @@
 # /v1/completions and /v1/chat/completions out of api_server.py into
 # per-endpoint modules. `:latest` (v0.10.x) still has the monolithic
 # api_server.py and the codec routes wouldn't fire there.
-ARG VLLM_BASE=vllm/vllm-openai:nightly
+ARG VLLM_BASE=wdunn001/codec-vllm:v0.4.1
 FROM ${VLLM_BASE}
 
 ARG CODEC_VLLM_REPO=https://github.com/wdunn001/vllm.git
@@ -51,7 +51,7 @@ WORKDIR /opt/codec
 RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
     apt-get update && apt-get install -y --no-install-recommends git \
  && rm -rf /var/lib/apt/lists/* \
- && git clone --depth 50 --branch "${CODEC_VLLM_REF}" "${CODEC_VLLM_REPO}" vllm-source \
+ && rm -rf vllm-source && git clone --depth 50 --branch "${CODEC_VLLM_REF}" "${CODEC_VLLM_REPO}" vllm-source \
  && cd vllm-source \
  && if [ -n "${CODEC_VLLM_COMMIT}" ]; then \
         git fetch --depth 50 origin "${CODEC_VLLM_COMMIT}" \
@@ -66,6 +66,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
  && for f in \
         vllm/entrypoints/codec_agent.py \
         vllm/entrypoints/codec_compression.py \
+        vllm/entrypoints/codec_dispatcher.py \
         vllm/entrypoints/codec_frame.py \
         vllm/entrypoints/codec_version.py \
         vllm/entrypoints/openai/chat_completion/api_router.py \
@@ -118,6 +119,11 @@ ENV CODEC_HOST=0.0.0.0 \
     CODEC_LOG_LEVEL=INFO \
     CODEC_ZSTD_DICT_MSGPACK_PATH=/opt/codec/dicts/qwen2.5-synth-msgpack-v1.dict \
     CODEC_ZSTD_DICT_PROTOBUF_PATH=/opt/codec/dicts/qwen2.5-synth-protobuf-v1.dict
+
+
+# Â§1.7 sub-gate 2 â runtime dict-availability probe.
+COPY check-dict-availability.sh /opt/codec/check-dict-availability.sh
+RUN chmod +x /opt/codec/check-dict-availability.sh
 
 VOLUME ["/models"]
 EXPOSE 8080

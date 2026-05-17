@@ -64,7 +64,7 @@ ARG DIFFUSERS_REQUIREMENTS_EXTRA
 # ---------- 1. clone the fork (installed editable so codec_server can reach
 #               into diffusers internals — VAE encode/decode hooks).
 WORKDIR /opt/codec
-RUN git clone --depth 50 --branch "${CODEC_DIFFUSERS_REF}" "${CODEC_DIFFUSERS_REPO}" diffusers \
+RUN rm -rf diffusers && git clone --depth 50 --branch "${CODEC_DIFFUSERS_REF}" "${CODEC_DIFFUSERS_REPO}" diffusers \
  && cd diffusers \
  && if [ -n "${CODEC_DIFFUSERS_COMMIT}" ]; then \
         git fetch --depth 50 origin "${CODEC_DIFFUSERS_COMMIT}" \
@@ -98,7 +98,7 @@ COPY pyproject.toml /opt/codec/supervisor/pyproject.toml
 COPY codec_supervisor /opt/codec/supervisor/codec_supervisor
 COPY README.md /opt/codec/supervisor/README.md
 RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
-    pip install --break-system-packages /opt/codec/supervisor
+    pip install --break-system-packages /opt/codec/supervisor brotli zstandard msgpack
 
 # ---------- 4. record the perceptual pin ----------
 # The bench fingerprint validator reads these at container start so every
@@ -125,6 +125,11 @@ ENV CODEC_HOST=0.0.0.0 \
     CODEC_LOG_LEVEL=INFO \
     HF_HOME=/root/.cache/huggingface \
     PYTHONPATH=/opt/codec/diffusers/examples
+
+
+# Â§1.7 sub-gate 2 â runtime dict-availability probe.
+COPY check-dict-availability.sh /opt/codec/check-dict-availability.sh
+RUN chmod +x /opt/codec/check-dict-availability.sh
 
 VOLUME ["/models"]
 EXPOSE 8080

@@ -29,7 +29,7 @@ LABEL org.opencontainers.image.title="codec-sglang" \
 # ---------- 1. overlay codec patches on stock sglang ----------
 WORKDIR /opt/codec
 RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
-    git clone --depth 50 --branch "${CODEC_SGLANG_REF}" "${CODEC_SGLANG_REPO}" sglang \
+    rm -rf sglang && git clone --depth 50 --branch "${CODEC_SGLANG_REF}" "${CODEC_SGLANG_REPO}" sglang \
  && cd sglang \
  && if [ -n "${CODEC_SGLANG_COMMIT}" ]; then \
         git fetch --depth 50 origin "${CODEC_SGLANG_COMMIT}" \
@@ -82,6 +82,11 @@ ENV CODEC_HOST=0.0.0.0 \
     CODEC_LOG_LEVEL=INFO \
     CODEC_ZSTD_DICT_MSGPACK_PATH=/opt/codec/dicts/qwen2.5-synth-msgpack-v1.dict \
     CODEC_ZSTD_DICT_PROTOBUF_PATH=/opt/codec/dicts/qwen2.5-synth-protobuf-v1.dict
+
+
+# Â§1.7 sub-gate 2 â runtime dict-availability probe.
+COPY check-dict-availability.sh /opt/codec/check-dict-availability.sh
+RUN chmod +x /opt/codec/check-dict-availability.sh
 
 VOLUME ["/models"]
 EXPOSE 8080
