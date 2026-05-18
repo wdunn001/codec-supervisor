@@ -110,7 +110,16 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
  && git clone --depth 1 https://github.com/ltdrdata/ComfyUI-Manager.git \
  && git clone --depth 1 https://github.com/rgthree/rgthree-comfy.git \
  && git clone --depth 1 https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git \
- && git clone --depth 1 https://github.com/city96/ComfyUI-GGUF.git \
+ && git clone --depth 1 https://github.com/city96/ComfyUI-GGUF.git
+
+# ---------- 2a-codec. ComfyUI-CodecGrabber (in-tree custom node) ----------
+# Bolts an Install ⤓ button onto the Workflow Overview → Errors →
+# Missing Models panel so server-side downloads land in the mounted volume
+# instead of the browser Downloads folder. Tiny: one Python route +
+# one JS extension. Source: codec-supervisor/comfyui-custom-nodes/codec-grabber/
+COPY comfyui-custom-nodes/codec-grabber /opt/codec/comfyui/custom_nodes/codec-grabber
+
+RUN cd /opt/codec/comfyui/custom_nodes \
  && pip install --break-system-packages \
       -r ComfyUI-Manager/requirements.txt \
  && ( pip install --break-system-packages -r rgthree-comfy/requirements.txt 2>/dev/null || true ) \
