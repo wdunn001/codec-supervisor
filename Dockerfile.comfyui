@@ -91,7 +91,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
     pip install --break-system-packages --ignore-installed --upgrade pip \
  && pip install --break-system-packages \
         --index-url https://download.pytorch.org/whl/cu124 \
-        torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION} \
+        torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION} torchaudio==${TORCH_VERSION} \
  && pip install --break-system-packages \
         diffusers==${DIFFUSERS_VERSION} \
         msgspec brotli zstandard \
