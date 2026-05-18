@@ -7,42 +7,46 @@ A backend-agnostic supervisor / control plane for inference servers. Wraps an Op
 - **Hot swap** — `POST /admin/load` restarts the backend with a different model. No container restart.
 - **Easily deployable** — one Docker image bundles the engine + the [Codec PRs](#codec-patches) + the supervisor. `docker run` and you have a working Codec inference instance.
 
-> **v0.4 in flight** — adds operator-side safety-policy authoring,
-> logits-space enforcement, a pluggable classifier registry (Llama
-> Guard 3 1B / ShieldGemma 2B / embedding-space), and an admin
-> React app under `/admin/policies/`. Sanitized policy descriptors
-> are published at `.well-known/codec/policies/<id>.json` so clients
-> can verify the *shape* of enforcement without operator-internal
-> banned-id lists ever crossing the wire. See
-> [Safety enforcement (v0.4 — work in progress)](#safety-enforcement-v04--work-in-progress)
-> below. The v0.4 cut is gated on the
-> [Codec release checklist](https://github.com/wdunn001/Codec/blob/main/docs/RELEASE_CHECKLIST.md).
+> **v0.5 shipped** (2026-05-18). Wire-additive over v0.4. New
+> opt-in surfaces: discoverable Zstandard dictionaries at
+> `.well-known/codec/dicts/<sha256>.zstd` (hash-pinned; release-
+> checklist §1.7 gates dict-bake + the
+> `/opt/codec/check-dict-availability.sh` probe in every engine
+> image); bolt-on tool dispatcher contract; content-aware
+> compression picker rewrite. v0.4 safety-policy surface from the
+> prior release stays: sanitized policy descriptors at
+> `.well-known/codec/policies/<id>.json`, operator-side authoring
+> via `/admin/policies/`, logits-space enforcement + classifier
+> registry. v0.5 cohort retired TGI; supported engines now sglang
+> + vLLM + llama.cpp + ComfyUI + diffusers.
 >
-> Every v0.4 capability is **opt-on, two-stage** (per the
+> Every v0.4+ capability is **opt-on, two-stage** (per the
 > [spec](https://github.com/wdunn001/Codec/blob/main/spec/versions/v0.4.md#capabilities-are-opt-on-at-the-server-two-stage)):
 > default OFF. Per-capability env vars enable; `*_REQUIRED=1` flips
-> on enforcement. A supervisor with no v0.4 capabilities enabled
+> on enforcement. A supervisor with no v0.4+ capabilities enabled
 > serves byte-equivalent v0.3 wire — no v0.4 negotiation headers,
 > no 426 for version reasons. Operators turn this on deliberately
 > for public / multi-tenant / mandatory-policy deployments.
 
-## Image catalog (current v0.3.x)
+## Image catalog (current v0.5.0)
 
 This repo's [`release.yml` workflow](.github/workflows/release.yml) builds and pushes the following images on every `v*` git tag. Tags emitted per image: `:vX.Y.Z` (semver, immutable) · `:latest` (moves with each release) · `:sha-<git7>` (immutable git-tree pin for hotfixes).
 
 | Image                                                                          | Current tag | Engine fork                                                                                       | Modality              |
 |--------------------------------------------------------------------------------|:-----------:|---------------------------------------------------------------------------------------------------|-----------------------|
-| [`wdunn001/codec-sglang`](https://hub.docker.com/r/wdunn001/codec-sglang)      | latest      | sglang + Codec patches (token-native binary transport + server-side ToolWatcher)                  | text-tokens           |
-| [`wdunn001/codec-vllm`](https://hub.docker.com/r/wdunn001/codec-vllm)          | latest      | vLLM + Codec patches (token-native binary transport on `/v1/completions` and `/v1/chat/completions`) | text-tokens           |
-| [`wdunn001/codec-llamacpp`](https://hub.docker.com/r/wdunn001/codec-llamacpp)  | latest      | llama.cpp + Codec patches on `llama-server` (covers Ollama too)                                   | text-tokens           |
-| [`wdunn001/codec-metamcp`](https://hub.docker.com/r/wdunn001/codec-metamcp)    | **v0.3.2**  | [`wdunn001/metamcp`](https://github.com/wdunn001/metamcp) `feat/codec-binary-transport`           | MCP gateway (with leaf-mode bypass) |
+| [`wdunn001/codec-sglang`](https://hub.docker.com/r/wdunn001/codec-sglang)      | **v0.5.0**  | sglang + Codec patches (token-native binary transport + server-side ToolWatcher + bolt-on dispatcher) | text-tokens           |
+| [`wdunn001/codec-vllm`](https://hub.docker.com/r/wdunn001/codec-vllm)          | **v0.5.0**  | vLLM + Codec patches (token-native binary transport on `/v1/completions` and `/v1/chat/completions`)  | text-tokens           |
+| [`wdunn001/codec-llamacpp`](https://hub.docker.com/r/wdunn001/codec-llamacpp)  | **v0.5.0**  | llama.cpp + Codec patches on `llama-server` (covers Ollama too)                                       | text-tokens           |
+| [`wdunn001/codec-metamcp`](https://hub.docker.com/r/wdunn001/codec-metamcp)    | **v0.3.2**  | [`wdunn001/metamcp`](https://github.com/wdunn001/metamcp) `feat/codec-binary-transport`               | MCP gateway (with leaf-mode bypass) |
 | [`wdunn001/codec-time-leaf`](https://hub.docker.com/r/wdunn001/codec-time-leaf) | **v0.3.2**  | Reference Codec-aware MCP server ([`@codecai/codec-time-leaf`](https://www.npmjs.com/package/@codecai/codec-time-leaf)) | MCP tool (v0.3) |
-| [`wdunn001/codec-comfyui`](https://hub.docker.com/r/wdunn001/codec-comfyui)    | **v0.3.1**  | [`wdunn001/ComfyUI`](https://github.com/wdunn001/ComfyUI) `feat/codec-latent-transport`           | latents (v0.3)        |
-| [`wdunn001/codec-diffusers`](https://hub.docker.com/r/wdunn001/codec-diffusers) | **v0.3.4**  | [`wdunn001/diffusers`](https://github.com/wdunn001/diffusers) `feat/codec-latent-transport`       | latents (v0.3) — first end-to-end run [validated](https://github.com/wdunn001/Codec/tree/main/packages/bench/results/2026-05-09T13-01-55Z/latent) on the lab |
+| [`wdunn001/codec-comfyui`](https://hub.docker.com/r/wdunn001/codec-comfyui)    | **v0.5.0**  | [`wdunn001/ComfyUI`](https://github.com/wdunn001/ComfyUI) `feat/codec-latent-transport`               | latents (v0.3+)       |
+| [`wdunn001/codec-diffusers`](https://hub.docker.com/r/wdunn001/codec-diffusers) | **v0.5.0**  | [`wdunn001/diffusers`](https://github.com/wdunn001/diffusers) `feat/codec-latent-transport`           | latents (v0.3+) |
 
-The v0.3.x point-release cadence reflects coordinated fixes that landed across Codec / metamcp / supervisor on 2026-05-09: leaf-mode bypass observable end-to-end (`[Codec][leaf]` log fires), per-block `_meta` wire shape (replaces the SDK-rejected sibling-block form), DiffusersBackend + ComfyUIBackend registered, and the latent Dockerfiles' `pip --ignore-installed pip` fix for the debian-base CUDA image. See [Codec/changelog](https://codecai.net/changelog/) for the customer-facing trail.
+`wdunn001/codec-tgi` was retired in v0.5 — TGI is treated as a dead project; the cohort is now five engines (sglang + vLLM + llama.cpp + ComfyUI + diffusers).
 
-To cut a release: `git tag v0.3.x && git push origin v0.3.x`. The workflow runs `docker buildx` against each Dockerfile in parallel and pushes once green. Secrets required: `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN`.
+The v0.5.0 release (2026-05-18) added `/opt/codec/dicts/qwen2.5-synth-{msgpack,protobuf}-v1.dict` bake-in to every text-engine image plus `/opt/codec/check-dict-availability.sh` — the release-checklist §1.7 sub-gate 2 runtime probe. Each image is also dep-verified for `import brotli, zstandard, msgpack` before push (release-checklist §1.9). metamcp + time-leaf stay on v0.3.2; no codec wire changes for them in v0.5.
+
+To cut a release: `git tag v0.X.Y && git push origin v0.X.Y`. The workflow runs `docker buildx` against each Dockerfile in parallel and pushes once green. Secrets required: `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN`.
 
 ## Why this exists
 
@@ -158,7 +162,7 @@ Pass `CODEC_BACKEND_ARGS` to tune sglang per-model (`--tp 2 --quantization fp8 -
 | `DELETE` | `/admin/models/{name}` | — | Refuses if the model is currently loaded |
 | `POST` | `/admin/load`            | `{"name": "qwen2.5-7b"}` or `{"name": "Qwen/Qwen2.5-7B-Instruct", "allow_remote": true}` | Restart backend with this model |
 | `POST` | `/admin/stop`            | — | Stop backend; supervisor stays up |
-| `GET`  | `/admin/policies`        | — | List safety policies on disk (id, version, hash, summary) — **v0.4, in flight** |
+| `GET`  | `/admin/policies`        | — | List safety policies on disk (id, version, hash, summary) — shipped in v0.4 |
 | `POST` | `/admin/policies`        | internal-policy JSON | Save a new policy revision (re-sanitize + re-hash) — **v0.4, in flight** |
 | `GET`  | `/admin/policies/{id}`   | — | Internal policy with full banned-id list / classifier thresholds (operator-only) — **v0.4** |
 | `GET`  | `/admin/policies/{id}/descriptor` | — | The sanitized publishable descriptor — same bytes served at `.well-known/codec/policies/<id>.json` — **v0.4** |
