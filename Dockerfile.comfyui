@@ -97,6 +97,26 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
         msgspec brotli zstandard \
  && pip install --break-system-packages -r /opt/codec/comfyui/requirements.txt
 
+# ---------- 2a. Bundled community custom nodes (Manager + rgthree + Custom-Scripts + GGUF) ----------
+# ComfyUI-Manager is the de-facto standard; without it operators can't install
+# anything else from the UI. rgthree + Custom-Scripts are the QoL kernel almost
+# every workflow assumes. GGUF is bundled because Flux on a 24-GB GPU
+# (3090/4090) requires the quantized variants. Other Tier-2 nodes (VideoHelper
+# for video, ControlNet-aux for guided composition, IPAdapter for image refs,
+# WAS for legacy image-manip) are workflow-specific and left for the operator
+# to install via Manager.
+RUN --mount=type=cache,target=/root/.cache/pip,id=codec-pip \
+    cd /opt/codec/comfyui/custom_nodes \
+ && git clone --depth 1 https://github.com/ltdrdata/ComfyUI-Manager.git \
+ && git clone --depth 1 https://github.com/rgthree/rgthree-comfy.git \
+ && git clone --depth 1 https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git \
+ && git clone --depth 1 https://github.com/city96/ComfyUI-GGUF.git \
+ && pip install --break-system-packages \
+      -r ComfyUI-Manager/requirements.txt \
+ && ( pip install --break-system-packages -r rgthree-comfy/requirements.txt 2>/dev/null || true ) \
+ && ( pip install --break-system-packages -r ComfyUI-Custom-Scripts/requirements.txt 2>/dev/null || true ) \
+ && ( pip install --break-system-packages -r ComfyUI-GGUF/requirements.txt 2>/dev/null || true )
+
 # ---------- 2b. fetch reference Codec zstd dicts (latent-side) ----------
 # Mirrors the text-side dict layout in Dockerfile.{vllm,sglang}. The latent
 # dicts are keyed by (latent_space_id, format, pipeline) — the supervisor's
