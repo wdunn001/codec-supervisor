@@ -25,6 +25,9 @@ dependencies = [
     "httpx>=0.27",
     "python-multipart>=0.0.9",
     "huggingface_hub>=0.20",
+    "msgpack>=1.0",
+    "brotli>=1.1",
+    "zstandard>=0.22",
     "pydantic>=2.5",
 ]
 
