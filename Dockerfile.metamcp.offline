@@ -1,0 +1,82 @@
+# syntax=docker/dockerfile:1.7
+#
+# codec/metamcp — OFFLINE build variant of Dockerfile.metamcp.
+# No internet fetches: source is COPYed from ./metamcp-src (a git worktree
+# of the fork branch — see README.offline.md), uv/uvx come from the local
+# registry mirror image, and the zstd dict ships in ./offline-assets.
+# pnpm still resolves from the registry UNLESS the layer cache or the
+# vendored node_modules tarball (see /mnt/data/offline-vendor) is used.
+# Base images resolve from the Forgejo registry (192.168.1.88:8530).
+
+ARG REGISTRY=192.168.1.88:8530
+ARG NODE_VERSION=24
+ARG PNPM_VERSION=10.12.0
+
+# ---------- 0. base ----------
+FROM ${REGISTRY}/mirror/node:${NODE_VERSION}-bookworm-slim AS base
+ARG PNPM_VERSION
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g pnpm@${PNPM_VERSION}
+WORKDIR /src
+
+# ---------- 1. source from build context (replaces git clone) ----------
+FROM base AS fetch
+COPY metamcp-src /src/metamcp
+RUN cd /src/metamcp \
+ && (git rev-parse HEAD > /src/CODEC_METAMCP_SHA 2>/dev/null || echo local > /src/CODEC_METAMCP_SHA) \
+ && (git log -1 --pretty='%h %s' > /src/CODEC_METAMCP_HEAD 2>/dev/null || echo local > /src/CODEC_METAMCP_HEAD)
+
+# ---------- 2. install + build ----------
+FROM base AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=fetch /src/metamcp /app
+RUN pnpm install --no-frozen-lockfile
+RUN pnpm build
+
+# ---------- 3. runtime ----------
+FROM ${REGISTRY}/mirror/node:${NODE_VERSION}-bookworm-slim AS runtime
+ARG REGISTRY
+ARG PNPM_VERSION
+LABEL org.opencontainers.image.title="codec-metamcp" \
+      org.opencontainers.image.description="MetaMCP with Codec binary transport — offline build" \
+      org.opencontainers.image.source="https://devops.quasarke.net/akadmin/codec-supervisor" \
+      org.opencontainers.image.vendor="Quasarke"
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl postgresql-client \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g pnpm@${PNPM_VERSION}
+# uv/uvx from the local mirror image instead of astral.sh installer
+COPY --from=192.168.1.88:8530/mirror/uv:debian /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser --system --uid 1001 --home /home/nextjs nextjs \
+ && mkdir -p /home/nextjs/.cache/node/corepack \
+ && chown -R nextjs:nodejs /home/nextjs
+WORKDIR /app
+COPY --from=builder --chown=nextjs:nodejs /app/apps/frontend/.next ./apps/frontend/.next
+COPY --from=builder --chown=nextjs:nodejs /app/apps/frontend/package.json ./apps/frontend/
+COPY --from=builder --chown=nextjs:nodejs /app/apps/backend/dist ./apps/backend/dist
+COPY --from=builder --chown=nextjs:nodejs /app/apps/backend/package.json ./apps/backend/
+COPY --from=builder --chown=nextjs:nodejs /app/apps/backend/drizzle ./apps/backend/drizzle
+COPY --from=builder --chown=nextjs:nodejs /app/apps/backend/drizzle.config.ts ./apps/backend/
+COPY --from=builder --chown=nextjs:nodejs /app/packages ./packages
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./
+COPY --from=builder --chown=nextjs:nodejs /app/pnpm-workspace.yaml ./
+RUN pnpm install --prod --no-frozen-lockfile \
+ && cd apps/backend && pnpm add drizzle-kit@0.31.1
+COPY --from=builder --chown=nextjs:nodejs /app/docker-entrypoint.sh ./
+RUN chmod +x /app/docker-entrypoint.sh
+COPY --from=fetch /src/CODEC_METAMCP_SHA  /opt/codec/CODEC_METAMCP_SHA
+COPY --from=fetch /src/CODEC_METAMCP_HEAD /opt/codec/CODEC_METAMCP_HEAD
+# zstd dict from the build context (mirrored wdunn001/Codec repo)
+COPY offline-assets/dicts/mcp-msgpack-msgpack-v1.dict /opt/codec/dicts/mcp-msgpack-v1.dict
+USER nextjs
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    CODEC_MCP_ZSTD_MSGPACK_DICT_PATH=/opt/codec/dicts/mcp-msgpack-v1.dict
+EXPOSE 12008
+HEALTHCHECK --interval=30s --timeout=30s --start-period=2m --retries=3 \
+  CMD curl -fsS http://localhost:12008/health || exit 1
+CMD ["./docker-entrypoint.sh"]
