@@ -1,4 +1,4 @@
-# codec-supervisor — coverage
+# codec-supervisor. Coverage
 
 Last measured: 2026-05-11 (v0.4 release-cut)
 
@@ -18,7 +18,7 @@ TOTAL    1577    438    72%
 
 | Module                                            | Cov%  | Notes |
 |---------------------------------------------------|------:|-------|
-| `safety_logits.py`                                | 100%  | BannedTokenLogitsProcessor — pure-function masking |
+| `safety_logits.py`                                | 100%  | BannedTokenLogitsProcessor. Pure-function masking |
 | `safety_enforcement.py`                           | 100%  | wrapper that wires policy + tokenizer to logits + matcher |
 | `safety_streaming.py`                             | 100%  | delay-k decisioning state machine |
 | `schemas.py`                                      | 100%  | Pydantic models for internal + published descriptor |
@@ -27,21 +27,21 @@ TOTAL    1577    438    72%
 | `safety.py`                                       |  ~85% | sanitize() + load/save |
 | `admin_safety.py`                                 |  ~80% | REST routes |
 | `safety_classifiers/embedding_space.py`           |  76%  | engine-hidden-state path; tests use generator-DI |
-| `safety_classifiers/llamaguard_3_1b.py`           |  66%  | 14-category — tests cover prompt/parse path with DI |
-| `safety_classifiers/shieldgemma_2b.py`            |  54%  | 4-category — same DI pattern, less corpus diversity |
-| `training/bootstrap_corpus.py`                    |  44%  | distillation pipeline — runs against real classifiers in integration runs |
+| `safety_classifiers/llamaguard_3_1b.py`           |  66%  | 14-category. Tests cover prompt/parse path with DI |
+| `safety_classifiers/shieldgemma_2b.py`            |  54%  | 4-category. Same DI pattern, less corpus diversity |
+| `training/bootstrap_corpus.py`                    |  44%  | distillation pipeline. Runs against real classifiers in integration runs |
 
 ## Intentionally uncovered
 
 - The downloadable-weight code paths in each classifier (~30 % of
-  each `safety_classifiers/*.py`) — tests use the generator-injection
+  each `safety_classifiers/*.py`). Tests use the generator-injection
   pattern (DI a `(text) → labels` callable) so the classifier-pipeline
   logic runs without loading Llama Guard 3 1B / ShieldGemma 2B
   weights. The actual `transformers` loading paths are exercised
   by the lab integration runs.
-- `training/bootstrap_corpus.py` (44 %) — distillation pipeline runs
+- `training/bootstrap_corpus.py` (44 %). Distillation pipeline runs
   end-to-end only with real classifier weights; covered in the lab
-  integration suite, not the per-package pytest.
+  integration suite. The per-package pytest does not reach it.
 
 ## v0.5 follow-up
 

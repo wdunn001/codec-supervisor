@@ -23,9 +23,10 @@ git -C metamcp-src checkout <ref>
 docker build -f Dockerfile.metamcp.offline -t codec-metamcp:local .
 ```
 
-`Dockerfile.metamcp.offline` differs from `Dockerfile.metamcp` by: COPY `./metamcp-src`
-instead of `git clone` from GitHub; uv/uvx copied from `mirror/uv:debian` instead of the
-astral.sh installer; the zstd dict COPYed from `offline-assets/` instead of
+`Dockerfile.metamcp.offline` differs from `Dockerfile.metamcp` in three places. It COPYs `./metamcp-src`
+where the online build runs `git clone` from GitHub. It copies uv/uvx from
+`mirror/uv:debian` where the online build fetches the astral.sh installer. It
+COPYs the zstd dict from `offline-assets/` where the online build pulls
 raw.githubusercontent.
 
 ## Caveats
@@ -34,5 +35,5 @@ raw.githubusercontent.
   layers (it does after any successful build) or you restore `node_modules` from
   `/mnt/data/offline-vendor/metamcp-node_modules-*.tgz`.
 - The base stage `apt-get install` also rides the layer cache; a truly from-scratch
-  offline host needs the mirrored images above (pull + retag) rather than a full rebuild.
+  offline host needs the mirrored images above (pull + retag), with no full rebuild.
 - Worst case, prod redeploys directly from `mirror/codec-metamcp:v0.5.0` with zero build.
